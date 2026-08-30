@@ -4,7 +4,7 @@ Indian tax-assistance backend built with FastAPI and PostgreSQL.
 
 ### First workflow: document upload
 
-`POST /api/v1/documents/upload?user_id=<uuid>` accepts a PDF/JPEG/PNG and queues it for OCR and indexing. The current endpoint validates the upload; persistent storage, OCR, embeddings, RAG retrieval, and n8n notifications are implemented in later milestones.
+`POST /api/v1/documents/upload?user_id=<uuid>` accepts a PDF/JPEG/PNG, stores metadata in PostgreSQL and the original file in `storage/uploads`, then marks it `QUEUED` for OCR and indexing. The supplied user must already exist in the `users` table.
 
 ### Database retrieval indexes
 

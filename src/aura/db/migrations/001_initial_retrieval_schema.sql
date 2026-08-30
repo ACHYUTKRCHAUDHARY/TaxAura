@@ -12,6 +12,7 @@ CREATE TABLE documents (
     user_id UUID NOT NULL REFERENCES users(id),
     filename VARCHAR(255) NOT NULL,
     mime_type VARCHAR(100) NOT NULL,
+    storage_path VARCHAR(500) NOT NULL,
     checksum CHAR(64) NOT NULL,
     extracted_text TEXT,
     processing_status VARCHAR(30) NOT NULL DEFAULT 'QUEUED',
