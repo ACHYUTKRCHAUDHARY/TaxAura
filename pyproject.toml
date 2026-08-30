@@ -8,7 +8,13 @@ authors = [
 ]
 requires-python = ">=3.14"
 dependencies = [
+    "alembic>=1.16.5",
+    "asyncpg>=0.30.0",
     "fastapi>=0.141.1",
+    "pgvector>=0.4.1",
+    "pydantic-settings>=2.10.1",
+    "python-multipart>=0.0.20",
+    "sqlalchemy>=2.0.43",
     "uvicorn>=0.52.4",
 ]
 
