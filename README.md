@@ -14,3 +14,15 @@ Run `src/aura/db/migrations/001_initial_retrieval_schema.sql` in a PostgreSQL da
 - Hash: exact document checksum duplicate lookup
 - GIN: OCR/tax-rule keyword search
 - HNSW: semantic RAG retrieval
+
+### Agentic tax advisor
+
+The advisor uses free local technology: LangGraph + Ollama + `qwen2.5:3b`. It can only use controlled tax-rule-search and user-document-status tools.
+
+```bash
+ollama pull qwen2.5:3b
+ollama serve
+uv run uvicorn aura.main:app --reload
+```
+
+Use `POST /api/v1/advisor/ask` with `user_id` and `question`.
