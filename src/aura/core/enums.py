@@ -11,3 +11,8 @@ class DocumentStatus(StrEnum):
 class TaxRegime(StrEnum):
     OLD = "OLD"
     NEW = "NEW"
+
+
+class UserRole(StrEnum):
+    USER = "USER"
+    ADMIN = "ADMIN"

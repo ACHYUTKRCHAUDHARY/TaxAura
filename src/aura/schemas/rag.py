@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from pydantic import BaseModel, Field, HttpUrl
 
 
@@ -15,7 +13,6 @@ class TaxRuleIngestResponse(BaseModel):
 
 class RagQuestion(BaseModel):
     question: str = Field(min_length=5, max_length=1_000)
-    user_id: UUID | None = None
 
 
 class RagSource(BaseModel):

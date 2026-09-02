@@ -1,6 +1,6 @@
 # TaxAura
 
-TaxAura is a FastAPI-based Indian tax-assistance MVP. It combines deterministic tax comparison, document OCR, PostgreSQL full-text/vector retrieval, local RAG with Ollama, n8n workflow events, and a controlled LangGraph advisor.
+TaxAura is a production-hardened FastAPI monolith for Indian tax assistance. It combines JWT authentication, deterministic tax comparison, secure document OCR, PostgreSQL full-text/vector retrieval, local RAG with Ollama, n8n workflow events, and a controlled LangGraph advisor.
 
 > TaxAura is an educational estimator, not professional tax or filing advice.
 
@@ -16,8 +16,9 @@ Client -> FastAPI -> PostgreSQL + pgvector
 
 ## Features
 
-- Create and retrieve users
-- Upload PDF/JPEG/PNG tax documents
+- Argon2 password hashing and expiring JWT access tokens
+- User/admin role-based authorization and user-data isolation
+- Stream and validate PDF/JPEG/PNG uploads using file signatures
 - Extract PDF text or run Tesseract OCR on images
 - Track `QUEUED -> PROCESSING -> COMPLETED/FAILED` status
 - B-tree, hash, GIN full-text, and HNSW vector indexes
@@ -37,10 +38,10 @@ uv sync --dev
 Copy-Item .env.example .env
 ```
 
-Create a PostgreSQL database named `taxaura`, enable pgvector, then run the SQL in:
+Set a unique `JWT_SECRET_KEY` in `.env`, create a PostgreSQL database named `taxaura`, then apply the versioned migration:
 
-```text
-src/aura/db/migrations/001_initial_retrieval_schema.sql
+```powershell
+uv run alembic upgrade head
 ```
 
 Install and start local models:
@@ -65,23 +66,30 @@ uv run uvicorn aura.main:app --reload
 
 Open Swagger UI: `http://127.0.0.1:8000/docs`.
 
+Create the first administrator:
+
+```powershell
+uv run python -m aura.scripts.create_admin --email admin@example.com --name "TaxAura Admin"
+```
+
 ## Main APIs
 
 | Method | Endpoint | Purpose |
 |---|---|---|
-| POST | `/api/v1/users` | Create a user |
-| GET | `/api/v1/users/{user_id}` | Get a user |
-| POST | `/api/v1/documents/upload?user_id=...` | Upload and process a document |
-| GET | `/api/v1/documents?user_id=...` | List user documents |
-| GET | `/api/v1/documents/{id}?user_id=...` | Check document status |
+| POST | `/api/v1/auth/register` | Register and receive a JWT |
+| POST | `/api/v1/auth/login` | Log in using email as `username` |
+| GET | `/api/v1/users/me` | Get the authenticated user |
+| POST | `/api/v1/documents/upload` | Upload and process your document |
+| GET | `/api/v1/documents` | List your documents |
+| GET | `/api/v1/documents/{id}` | Check your document status |
 | POST | `/api/v1/tax/compare` | Compare old/new regime estimates |
-| POST | `/api/v1/knowledge/rules` | Ingest verified tax-rule text |
+| POST | `/api/v1/knowledge/rules` | Admin-only verified-rule ingestion |
 | POST | `/api/v1/knowledge/ask` | Ask a cited RAG question |
 | POST | `/api/v1/advisor/ask` | Use the controlled agent |
 
 ## n8n
 
-Import `n8n/workflows/document-notifications.json` into n8n, activate it, and set its production webhook URL as `N8N_WEBHOOK_URL` in `.env`. TaxAura emits `document.completed` and `document.failed` events. Add email, Telegram, or other notification nodes after the webhook as needed.
+Import `n8n/workflows/document-notifications.json` into n8n, activate it, and set its production webhook URL and a strong shared secret as `N8N_WEBHOOK_URL` and `N8N_WEBHOOK_SECRET` in `.env`. TaxAura signs each body with HMAC-SHA256 in `X-TaxAura-Signature`; verify that signature in n8n before adding notification nodes. TaxAura emits `document.completed` and `document.failed` events.
 
 ## Database retrieval strategy
 
@@ -106,10 +114,20 @@ uv run ruff check src tests
 uv run pytest
 ```
 
-## Next production steps
+## Production controls included
 
-- Add JWT authentication and replace query-string `user_id` with authenticated identity
-- Protect tax-rule ingestion with an admin role
+- Production startup rejects the placeholder JWT secret
+- CORS and allowed-host lists come from the environment
+- Security headers and request IDs are attached to responses
+- Password hashes never leave the API
+- Tax-rule ingestion requires the `ADMIN` role
+- Document reads and uploads derive identity from JWT, not client-supplied user IDs
+- Uploads are streamed, size-limited, signature-checked, randomly named, and private on disk
+- Alembic manages schema versions
+
+## Infrastructure steps before public deployment
+
 - Move uploads to encrypted object storage
-- Add malware scanning, rate limits, audit logs, and secret management
+- Add malware scanning, distributed rate limits, audit logs, and managed secret storage
 - Use a durable worker queue instead of in-process background tasks
+- Put the API behind TLS and a reverse proxy/load balancer
