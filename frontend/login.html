@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Log in — TaxAura</title><link rel="stylesheet" href="/app/css/styles.css">
+</head>
+<body class="auth-page">
+  <a class="brand auth-brand" href="/app/"><span class="brand-mark">T</span>TaxAura</a>
+  <main class="auth-shell">
+    <section class="auth-card">
+      <p class="eyebrow">Welcome back</p><h1>Log in to TaxAura</h1><p>Continue to your secure tax workspace.</p>
+      <div id="form-message" class="form-message" role="alert" hidden></div>
+      <form id="login-form" class="form-stack">
+        <label>Email<input id="email" name="email" type="email" autocomplete="email" required></label>
+        <label>Password<input id="password" name="password" type="password" autocomplete="current-password" minlength="12" required></label>
+        <button class="button button-primary button-full" type="submit">Log in</button>
+      </form>
+      <p class="auth-switch">New to TaxAura? <a href="/app/register.html">Create an account</a></p>
+    </section>
+  </main>
+  <script type="module" src="/app/js/auth.js"></script>
+</body>
+</html>

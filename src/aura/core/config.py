@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/taxaura"
     max_upload_size_mb: int = 10
     upload_directory: Path = Path("storage/uploads")
+    frontend_directory: Path = Path("frontend")
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "qwen2.5:3b"
     ollama_embedding_model: str = "nomic-embed-text"

@@ -24,6 +24,16 @@ class SecurityHeadersMiddleware:
                         (b"x-frame-options", b"DENY"),
                         (b"referrer-policy", b"no-referrer"),
                         (b"cache-control", b"no-store"),
+                        (
+                            b"content-security-policy",
+                            b" ".join(
+                                [
+                                    b"default-src 'self'; img-src 'self' data:;",
+                                    b"style-src 'self'; script-src 'self'; connect-src 'self';",
+                                    b"frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+                                ]
+                            ),
+                        ),
                     ]
                 )
                 message["headers"] = headers

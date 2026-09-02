@@ -2,6 +2,8 @@
 
 TaxAura is a production-hardened FastAPI monolith for Indian tax assistance. It combines JWT authentication, deterministic tax comparison, secure document OCR, PostgreSQL full-text/vector retrieval, local RAG with Ollama, n8n workflow events, and a controlled LangGraph advisor.
 
+The responsive frontend is built with HTML, CSS, and Vanilla JavaScript and is served by FastAPI from `/app`.
+
 > TaxAura is an educational estimator, not professional tax or filing advice.
 
 ## Architecture
@@ -26,6 +28,7 @@ Client -> FastAPI -> PostgreSQL + pgvector
 - Compare old and new regimes for AY 2026-27
 - Publish document completion/failure events to n8n
 - Optional controlled LangGraph + Ollama advisor
+- Responsive landing, authentication, dashboard, calculator, RAG chat, and admin screens
 
 ## Windows setup
 
@@ -64,7 +67,7 @@ Start the API:
 uv run uvicorn aura.main:app --reload
 ```
 
-Open Swagger UI: `http://127.0.0.1:8000/docs`.
+Open the application at `http://127.0.0.1:8000/app/` or Swagger UI at `http://127.0.0.1:8000/docs`.
 
 Create the first administrator:
 
@@ -86,6 +89,25 @@ uv run python -m aura.scripts.create_admin --email admin@example.com --name "Tax
 | POST | `/api/v1/knowledge/rules` | Admin-only verified-rule ingestion |
 | POST | `/api/v1/knowledge/ask` | Ask a cited RAG question |
 | POST | `/api/v1/advisor/ask` | Use the controlled agent |
+
+## Frontend structure
+
+```text
+frontend/
+├── index.html
+├── login.html
+├── register.html
+├── dashboard.html
+├── admin.html
+├── css/styles.css
+└── js/
+    ├── api.js
+    ├── auth.js
+    ├── dashboard.js
+    └── admin.js
+```
+
+The browser stores the short-lived access token in `sessionStorage`, sends it as a Bearer token, and clears it when the browser tab session ends or the user logs out.
 
 ## n8n
 
