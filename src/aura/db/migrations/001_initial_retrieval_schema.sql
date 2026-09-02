@@ -1,13 +1,14 @@
--- Run this migration against PostgreSQL before enabling document/RAG APIs.
+-- Fresh TaxAura database schema.
 CREATE EXTENSION IF NOT EXISTS vector;
 
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY,
     email VARCHAR(255) NOT NULL UNIQUE,
+    full_name VARCHAR(120) NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE documents (
+CREATE TABLE IF NOT EXISTS documents (
     id UUID PRIMARY KEY,
     user_id UUID NOT NULL REFERENCES users(id),
     filename VARCHAR(255) NOT NULL,
@@ -19,24 +20,29 @@ CREATE TABLE documents (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- B-tree: user-scoped document listing and recent-upload retrieval.
-CREATE INDEX idx_documents_user_created_at ON documents(user_id, created_at DESC);
--- Hash: only exact checksum duplicate detection; B-tree remains the general default.
-CREATE INDEX idx_documents_checksum_hash ON documents USING HASH(checksum);
--- GIN inverted index: fast keyword/full-text search over OCR text.
-CREATE INDEX idx_documents_extracted_text_fts
-ON documents USING GIN (to_tsvector('english', coalesce(extracted_text, '')));
-
-CREATE TABLE tax_rule_chunks (
+CREATE TABLE IF NOT EXISTS tax_rule_chunks (
     id UUID PRIMARY KEY,
     source_name VARCHAR(255) NOT NULL,
+    source_url VARCHAR(1000),
     content TEXT NOT NULL,
-    embedding vector(1536),
+    embedding vector(768),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_tax_rule_chunks_fts
-ON tax_rule_chunks USING GIN (to_tsvector('english', content));
--- HNSW: approximate nearest-neighbour retrieval for RAG semantic search.
-CREATE INDEX idx_tax_rule_chunks_embedding_hnsw
-ON tax_rule_chunks USING hnsw (embedding vector_cosine_ops);
+CREATE TABLE IF NOT EXISTS document_chunks (
+    id UUID PRIMARY KEY,
+    document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id),
+    content TEXT NOT NULL,
+    embedding vector(768),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_documents_user_created_at ON documents(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_document_chunks_user_document ON document_chunks(user_id, document_id);
+CREATE INDEX IF NOT EXISTS idx_documents_checksum_hash ON documents USING HASH(checksum);
+CREATE INDEX IF NOT EXISTS idx_documents_extracted_text_fts ON documents USING GIN (to_tsvector('english', coalesce(extracted_text, '')));
+CREATE INDEX IF NOT EXISTS idx_tax_rule_chunks_fts ON tax_rule_chunks USING GIN (to_tsvector('english', content));
+CREATE INDEX IF NOT EXISTS idx_document_chunks_fts ON document_chunks USING GIN (to_tsvector('english', content));
+CREATE INDEX IF NOT EXISTS idx_tax_rule_chunks_embedding_hnsw ON tax_rule_chunks USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX IF NOT EXISTS idx_document_chunks_embedding_hnsw ON document_chunks USING hnsw (embedding vector_cosine_ops);

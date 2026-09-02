@@ -8,6 +8,10 @@ engine = create_async_engine(settings.database_url, pool_pre_ping=True)
 AsyncSessionFactory = async_sessionmaker(engine, expire_on_commit=False)
 
 
-async def get_session() -> AsyncGenerator[AsyncSession, None]:
+async def get_session() -> AsyncGenerator[AsyncSession]:
     async with AsyncSessionFactory() as session:
         yield session
+
+
+async def close_database() -> None:
+    await engine.dispose()

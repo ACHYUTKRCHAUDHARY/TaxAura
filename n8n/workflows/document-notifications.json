@@ -1,0 +1,25 @@
+{
+  "name": "TaxAura Document Events",
+  "nodes": [
+    {
+      "parameters": {"httpMethod": "POST", "path": "taxaura-events", "responseMode": "responseNode"},
+      "id": "taxaura-webhook",
+      "name": "TaxAura Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [260, 300]
+    },
+    {
+      "parameters": {"respondWith": "json", "responseBody": "={\"received\": true}"},
+      "id": "webhook-response",
+      "name": "Acknowledge Event",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [520, 300]
+    }
+  ],
+  "connections": {"TaxAura Webhook": {"main": [[{"node": "Acknowledge Event", "type": "main", "index": 0}]]}},
+  "active": false,
+  "settings": {"executionOrder": "v1"},
+  "versionId": "15ddb58d-b435-4528-93df-3a080f8dd0db"
+}

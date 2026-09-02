@@ -1,7 +1,7 @@
 [project]
 name = "aura"
 version = "0.1.0"
-description = "Add your description here"
+description = "AI-powered Indian tax assistant with RAG and workflow automation"
 readme = "README.md"
 authors = [
     { name = "achyut", email = "achyutchaudhary47@gmail.com" }
@@ -11,14 +11,37 @@ dependencies = [
     "alembic>=1.16.5",
     "asyncpg>=0.30.0",
     "fastapi>=0.141.1",
+    "email-validator>=2.2.0",
+    "httpx[socks]>=0.28.1",
     "langchain-ollama>=1.0.1",
     "langgraph>=1.0.2",
+    "pillow>=11.3.0",
     "pgvector>=0.4.1",
+    "pypdf>=6.0.0",
     "pydantic-settings>=2.10.1",
+    "pytesseract>=0.3.13",
     "python-multipart>=0.0.20",
     "sqlalchemy>=2.0.43",
     "uvicorn>=0.52.4",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.1.0",
+    "ruff>=0.12.11",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+ignore = ["B008"]
 
 [project.scripts]
 aura = "aura:main"
