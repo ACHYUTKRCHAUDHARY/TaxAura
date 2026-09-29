@@ -1,22 +1,33 @@
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
 
 from aura.api.router import api_router
 from aura.core.config import settings
 from aura.core.logging import configure_logging
 from aura.core.middleware import SecurityHeadersMiddleware
-from aura.db.session import close_database
+from aura.db.session import AsyncSessionFactory, close_database
+from aura.services.document_processor import run_document_worker
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     configure_logging()
-    yield
-    await close_database()
+    task = asyncio.create_task(run_document_worker()) if settings.document_worker_enabled else None
+    try:
+        yield
+    finally:
+        if task:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+        await close_database()
 
 
 app = FastAPI(
@@ -52,3 +63,13 @@ def root():
 @app.get("/health")
 def health_check():
     return {"status": "UP"}
+
+
+@app.get("/ready")
+async def readiness():
+    try:
+        async with AsyncSessionFactory() as session:
+            await session.execute(text("SELECT id FROM documents LIMIT 1"))
+        return {"status": "READY"}
+    except Exception:  # noqa: BLE001 - optional dependency boundary
+        return JSONResponse(status_code=503, content={"status": "NOT_READY"})

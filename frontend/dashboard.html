@@ -24,8 +24,8 @@
     <section id="overview" class="dashboard-section active-section">
       <div class="metric-grid">
         <article class="metric-card"><span>Documents</span><strong id="document-count">0</strong><small>Uploaded securely</small></article>
-        <article class="metric-card accent-card"><span>Processing status</span><strong id="processed-count">0 ready</strong><small>Indexed for your workspace</small></article>
-        <article class="metric-card"><span>Knowledge mode</span><strong>Hybrid RAG</strong><small>Keyword + semantic retrieval</small></article>
+        <article class="metric-card accent-card"><span>Processing status</span><strong id="processed-count">0 ready</strong><small>Text extracted for your workspace</small></article>
+        <article class="metric-card"><span>Knowledge mode</span><strong>Hybrid RAG</strong><small>PostgreSQL + ChromaDB</small></article>
       </div>
       <div class="content-grid">
         <article class="panel"><div class="panel-heading"><div><p class="eyebrow">Quick start</p><h2>Upload a tax document</h2></div></div><p>PDF, JPEG, or PNG up to 10 MB. Files are signature-checked before processing.</p><form id="quick-upload-form" class="upload-zone"><input id="quick-file" type="file" accept=".pdf,.jpg,.jpeg,.png" required><button class="button button-primary" type="submit">Upload document</button></form></article>
@@ -35,8 +35,10 @@
 
     <section id="documents" class="dashboard-section">
       <div class="section-toolbar"><div><p class="eyebrow">Private documents</p><h2>Your uploads</h2></div><form id="document-upload-form" class="inline-upload"><input id="document-file" type="file" accept=".pdf,.jpg,.jpeg,.png" required><button class="button button-primary" type="submit">Upload</button></form></div>
-      <div class="table-wrap"><table><thead><tr><th>File</th><th>Type</th><th>Status</th><th>Uploaded</th></tr></thead><tbody id="document-table"><tr><td colspan="4" class="empty-state">No documents uploaded yet.</td></tr></tbody></table></div>
+      <div class="table-wrap"><table><thead><tr><th>File</th><th>Type</th><th>Status</th><th>Uploaded</th><th>Actions</th></tr></thead><tbody id="document-table"><tr><td colspan="5" class="empty-state">No documents uploaded yet.</td></tr></tbody></table></div>
     </section>
+
+    <dialog id="document-preview"><h2 id="preview-title">Document text</h2><button id="close-preview" class="button button-secondary">Close</button><pre id="preview-text"></pre></dialog>
 
     <section id="calculator" class="dashboard-section">
       <div class="section-toolbar"><div><p class="eyebrow">AY 2026–27</p><h2>Old vs new regime</h2></div></div>
@@ -45,7 +47,7 @@
 
     <section id="assistant" class="dashboard-section">
       <div class="section-toolbar"><div><p class="eyebrow">Verified knowledge</p><h2>Ask the tax assistant</h2></div></div>
-      <div class="chat-shell"><div id="chat-messages" class="chat-messages"><div class="chat-message assistant-message">Ask a question about tax rules. I’ll answer only when verified context is available.</div></div><form id="rag-form" class="chat-form"><label class="sr-only" for="rag-question">Tax question</label><textarea id="rag-question" rows="2" minlength="5" maxlength="1000" placeholder="Example: What is the standard deduction under the new regime?" required></textarea><button class="button button-primary" type="submit">Ask</button></form></div>
+      <div class="chat-shell"><div id="chat-messages" class="chat-messages"><div class="chat-message assistant-message">Ask a question about tax rules. I’ll answer only when verified context is available.</div></div><form id="rag-form" class="chat-form"><label class="sr-only" for="rag-question">Tax question</label><textarea id="rag-question" rows="2" minlength="5" maxlength="1000" placeholder="Example: What is the standard deduction under the new regime?" required></textarea><label><input id="include-documents" type="checkbox"> Include my documents</label><button class="button button-primary" type="submit">Ask</button></form></div>
     </section>
   </main>
   <script type="module" src="/app/js/dashboard.js"></script>

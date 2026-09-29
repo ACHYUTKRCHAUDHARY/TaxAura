@@ -1,14 +1,27 @@
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     app_name: str = "TaxAura"
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/taxaura"
-    max_upload_size_mb: int = 10
+    max_upload_size_mb: int = Field(default=10, ge=1, le=25)
+    max_documents_per_user: int = Field(default=50, ge=1)
+    document_worker_enabled: bool = True
+    worker_poll_seconds: float = Field(default=3, ge=0.1)
+    ai_mode: Literal["extractive", "ollama"] = "extractive"
+    ai_timeout_seconds: float = Field(default=45, ge=1, le=300)
+    chroma_mode: Literal["local", "http", "cloud", "disabled"] = "local"
+    chroma_directory: str = "storage/chroma"
+    chroma_host: str = "localhost"
+    chroma_port: int = 8001
+    chroma_ssl: bool = False
+    chroma_api_key: str | None = None
+    chroma_tenant: str | None = None
+    chroma_database: str | None = None
     upload_directory: Path = Path("storage/uploads")
     frontend_directory: Path = Path("frontend")
     ollama_base_url: str = "http://localhost:11434"
@@ -17,15 +30,23 @@ class Settings(BaseSettings):
     n8n_webhook_url: str | None = None
     n8n_webhook_secret: str | None = None
     tesseract_cmd: str | None = None
-    environment: str = "development"
+    environment: Literal["development", "test", "production"] = "development"
     jwt_secret_key: str = "replace-this-with-a-long-random-secret"
-    jwt_algorithm: str = "HS256"
-    access_token_expire_minutes: int = 30
+    jwt_algorithm: Literal["HS256"] = "HS256"
+    access_token_expire_minutes: int = Field(default=30, ge=1, le=1440)
     allowed_origins: Annotated[list[str], NoDecode] = [
         "http://localhost:3000",
         "http://127.0.0.1:5500",
     ]
     allowed_hosts: Annotated[list[str], NoDecode] = ["localhost", "127.0.0.1", "testserver"]
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def normalize_database_url(cls, value: str) -> str:
+        for prefix in ("postgres://", "postgresql://"):
+            if value.startswith(prefix):
+                return value.replace(prefix, "postgresql+asyncpg://", 1)
+        return value
 
     @field_validator("allowed_origins", "allowed_hosts", mode="before")
     @classmethod
@@ -36,6 +57,16 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_production_secrets(self) -> Settings:
+        if self.chroma_mode == "cloud" and not all(
+            (self.chroma_api_key, self.chroma_tenant, self.chroma_database)
+        ):
+            raise ValueError(
+                "Chroma Cloud requires CHROMA_API_KEY, CHROMA_TENANT, and CHROMA_DATABASE."
+            )
+        if self.environment == "production" and self.chroma_mode == "local":
+            raise ValueError(
+                "Use hosted ChromaDB (cloud/http) or explicitly disable vectors in production."
+            )
         if self.environment == "production" and self.jwt_secret_key.startswith("replace-this"):
             raise ValueError("JWT_SECRET_KEY must be changed in production.")
         if len(self.jwt_secret_key) < 32:

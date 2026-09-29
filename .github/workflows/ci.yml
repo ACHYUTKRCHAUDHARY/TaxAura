@@ -1,0 +1,35 @@
+name: Verify TaxAura
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: taxaura_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/taxaura_test
+      TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/taxaura_test
+      CHROMA_MODE: disabled
+      DOCUMENT_WORKER_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.5"
+          python-version: "3.14"
+      - run: uv sync --frozen --dev
+      - run: uv run ruff check src tests
+      - run: uv run alembic upgrade head
+      - run: uv run pytest -q

@@ -21,3 +21,17 @@ def test_access_token_contains_identity_and_role() -> None:
     payload = decode_access_token(token)
     assert payload["sub"] == str(user_id)
     assert payload["role"] == "USER"
+
+
+def test_legacy_password_hash_fails_closed():
+    assert not verify_password("some-password", "legacy-account-reset-required")
+
+
+def test_advisor_identity_is_not_a_model_argument(monkeypatch):
+    from aura.services import tax_advisor_agent
+
+    monkeypatch.setattr(tax_advisor_agent, "ChatOllama", lambda **kwargs: object())
+    monkeypatch.setattr(tax_advisor_agent, "create_react_agent", lambda model, **kwargs: kwargs)
+    advisor = tax_advisor_agent.build_tax_advisor(str(uuid4()))
+    status_tool = next(tool for tool in advisor["tools"] if tool.name == "get_document_status")
+    assert status_tool.args == {}

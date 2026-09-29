@@ -28,7 +28,7 @@ function renderDocuments() {
   table.replaceChildren();
   if (!documents.length) {
     const row = document.createElement("tr"); const cell = document.createElement("td");
-    cell.colSpan = 4; cell.className = "empty-state"; cell.textContent = "No documents uploaded yet.";
+    cell.colSpan = 5; cell.className = "empty-state"; cell.textContent = "No documents uploaded yet.";
     row.append(cell); table.append(row);
   } else {
     documents.forEach((documentItem) => {
@@ -36,7 +36,33 @@ function renderDocuments() {
       [documentItem.filename, documentItem.mime_type].forEach((value) => { const cell = document.createElement("td"); cell.textContent = value; row.append(cell); });
       const statusCell = document.createElement("td"); const status = document.createElement("span");
       status.className = `document-status ${statusClass(documentItem.processing_status)}`; status.textContent = documentItem.processing_status; statusCell.append(status); row.append(statusCell);
-      const dateCell = document.createElement("td"); dateCell.textContent = new Date(documentItem.created_at).toLocaleString(); row.append(dateCell); table.append(row);
+      const dateCell = document.createElement("td"); dateCell.textContent = new Date(documentItem.created_at).toLocaleString(); row.append(dateCell);
+      const actions = document.createElement("td");
+      const addAction = (label, handler) => {
+        const button = document.createElement("button"); button.className = "button button-secondary";
+        button.textContent = label;
+        button.addEventListener("click", async () => {
+          setBusy(button, true);
+          try { await handler(); } catch (error) { showMessage(globalMessage, error.message); }
+          finally { setBusy(button, false); }
+        });
+        actions.append(button);
+      };
+      if (documentItem.processing_status === "COMPLETED") addAction("View text", async () => {
+        const data = await apiFetch(`/documents/${documentItem.id}/text`);
+        document.querySelector("#preview-title").textContent = data.filename;
+        document.querySelector("#preview-text").textContent = data.text;
+        document.querySelector("#document-preview").showModal();
+      });
+      if (documentItem.processing_status === "FAILED") {
+        status.title = documentItem.processing_error || "Processing failed";
+        addAction("Retry", async () => { await apiFetch(`/documents/${documentItem.id}/retry`, {method: "POST"}); await loadDocuments(); });
+      }
+      addAction("Delete", async () => {
+        if (!window.confirm(`Delete ${documentItem.filename} and its extracted text?`)) return;
+        await apiFetch(`/documents/${documentItem.id}`, {method: "DELETE"}); await loadDocuments();
+      });
+      row.append(actions); table.append(row);
     });
   }
   document.querySelector("#document-count").textContent = String(documents.length);
@@ -76,11 +102,29 @@ document.querySelector("#rag-form").addEventListener("submit", async (event) => 
   event.preventDefault(); const form = event.currentTarget; const textarea = document.querySelector("#rag-question"); const question = textarea.value.trim(); const button = form.querySelector("button");
   const messages = document.querySelector("#chat-messages"); const userMessage = document.createElement("div"); userMessage.className = "chat-message user-message"; userMessage.textContent = question; messages.append(userMessage); textarea.value = ""; setBusy(button, true, "Thinking…");
   try {
-    const result = await apiFetch("/knowledge/ask", {method: "POST", body: JSON.stringify({question})}); const answer = document.createElement("div"); answer.className = "chat-message assistant-message"; answer.textContent = result.answer;
-    if (result.sources.length) { const sources = document.createElement("div"); sources.className = "chat-sources"; sources.textContent = `Sources: ${result.sources.map((source) => source.source_name).join(", ")}`; answer.append(sources); }
+    const result = await apiFetch("/knowledge/ask", {method: "POST", body: JSON.stringify({question, include_documents: document.querySelector("#include-documents").checked})}); const answer = document.createElement("div"); answer.className = "chat-message assistant-message"; answer.textContent = result.answer;
+    if (result.sources.length) { const sources = document.createElement("div"); sources.className = "chat-sources"; sources.textContent = "Sources: ";
+      result.sources.forEach((source) => {
+        const item = document.createElement(source.source_url ? "a" : "span");
+        item.textContent = `${source.source_name} `;
+        if (source.source_url) {
+          const url = new URL(source.source_url);
+          if (["https:", "http:"].includes(url.protocol)) { item.href = url.href; item.target = "_blank"; item.rel = "noopener noreferrer"; }
+        }
+        sources.append(item);
+      }); answer.append(sources); }
     messages.append(answer);
   } catch (error) { const answer = document.createElement("div"); answer.className = "chat-message assistant-message"; answer.textContent = error.message; messages.append(answer); }
   finally { setBusy(button, false); messages.scrollTop = messages.scrollHeight; }
 });
 
 Promise.all([loadUser(), loadDocuments()]).catch((error) => showMessage(globalMessage, error.message));
+
+document.querySelector("#close-preview").addEventListener("click", () => document.querySelector("#document-preview").close());
+let polling = false;
+setInterval(async () => {
+  if (polling || document.hidden || !documents.some((item) => ["QUEUED", "PROCESSING"].includes(item.processing_status))) return;
+  polling = true;
+  try { await loadDocuments(); } catch (error) { showMessage(globalMessage, error.message); }
+  finally { polling = false; }
+}, 4000);

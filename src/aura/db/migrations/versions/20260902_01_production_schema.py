@@ -11,7 +11,6 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.execute("CREATE EXTENSION IF NOT EXISTS vector")
     Base.metadata.create_all(bind=op.get_bind(), checkfirst=True)
     # Harden databases created by the earlier MVP SQL script. Legacy accounts
     # are disabled until an administrator assigns a real password.
@@ -35,12 +34,6 @@ def upgrade() -> None:
     )
     op.execute(
         "CREATE INDEX IF NOT EXISTS idx_document_chunks_fts ON document_chunks USING GIN (to_tsvector('english', content))"
-    )
-    op.execute(
-        "CREATE INDEX IF NOT EXISTS idx_tax_rule_chunks_embedding_hnsw ON tax_rule_chunks USING hnsw (embedding vector_cosine_ops)"
-    )
-    op.execute(
-        "CREATE INDEX IF NOT EXISTS idx_document_chunks_embedding_hnsw ON document_chunks USING hnsw (embedding vector_cosine_ops)"
     )
 
 

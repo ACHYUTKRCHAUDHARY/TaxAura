@@ -3,6 +3,7 @@ from uuid import UUID
 
 import jwt
 from pwdlib import PasswordHash
+from pwdlib.exceptions import UnknownHashError
 
 from aura.core.config import settings
 
@@ -14,7 +15,10 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(password: str, encoded_password: str) -> bool:
-    return password_hash.verify(password, encoded_password)
+    try:
+        return password_hash.verify(password, encoded_password)
+    except UnknownHashError, ValueError:
+        return False
 
 
 def create_access_token(user_id: UUID, role: str) -> str:
