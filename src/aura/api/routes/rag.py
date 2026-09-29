@@ -24,8 +24,8 @@ async def add_tax_rule(
     _: AdminUser,
     session: AsyncSession = Depends(get_session),
 ) -> TaxRuleIngestResponse:
-    count = await ingest_tax_rule(payload, session)
-    return TaxRuleIngestResponse(chunks_created=count)
+    count, indexed = await ingest_tax_rule(payload, session)
+    return TaxRuleIngestResponse(chunks_created=count, semantic_indexed=indexed)
 
 
 @router.post("/ask", response_model=RagAnswer)
@@ -35,9 +35,11 @@ async def ask_rag(
     session: AsyncSession = Depends(get_session),
 ) -> RagAnswer:
     try:
-        return await answer_with_rag(payload.question, current_user.id, session)
+        return await answer_with_rag(
+            payload.question, current_user.id, session, payload.include_documents
+        )
     except Exception as error:
         raise HTTPException(
             status_code=503,
-            detail="RAG service is unavailable. Verify PostgreSQL, pgvector, and Ollama.",
+            detail="RAG service is unavailable. Verify PostgreSQL and ChromaDB.",
         ) from error

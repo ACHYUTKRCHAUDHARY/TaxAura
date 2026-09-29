@@ -1,8 +1,7 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Index, LargeBinary, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -35,6 +34,8 @@ class Document(Base):
     storage_path: Mapped[str] = mapped_column(String(500), nullable=False)
     checksum: Mapped[str] = mapped_column(String(64), nullable=False)
     extracted_text: Mapped[str | None] = mapped_column(Text())
+    file_content: Mapped[bytes | None] = mapped_column(LargeBinary(), deferred=True)
+    processing_error: Mapped[str | None] = mapped_column(String(255))
     processing_status: Mapped[str] = mapped_column(String(30), default="QUEUED", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -48,7 +49,6 @@ class TaxRuleChunk(Base):
     source_name: Mapped[str] = mapped_column(String(255), nullable=False)
     source_url: Mapped[str | None] = mapped_column(String(1000))
     content: Mapped[str] = mapped_column(Text(), nullable=False)
-    embedding: Mapped[list[float] | None] = mapped_column(Vector(768))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -63,5 +63,4 @@ class DocumentChunk(Base):
         PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
     content: Mapped[str] = mapped_column(Text(), nullable=False)
-    embedding: Mapped[list[float] | None] = mapped_column(Vector(768))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

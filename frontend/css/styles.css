@@ -174,3 +174,12 @@ tbody tr:last-child td { border-bottom: 0; }
   .inline-upload, .upload-zone, .chat-form { align-items: stretch; flex-direction: column; }
   .user-chip { display: none; }
 }
+
+/* Document review and source citations */
+dialog { width: min(850px, 90vw); max-height: 85vh; border: 1px solid #dce5de; border-radius: 18px; padding: 24px; }
+dialog::backdrop { background: rgba(13, 35, 25, .5); }
+#preview-text, .assistant-message { white-space: pre-wrap; overflow-wrap: anywhere; }
+#preview-text { max-height: 60vh; overflow: auto; line-height: 1.6; }
+td .button { padding: 6px 10px; margin: 3px; font-size: 12px; }
+.chat-sources a { text-decoration: underline; }
+.chat-form label { font-size: 12px; }

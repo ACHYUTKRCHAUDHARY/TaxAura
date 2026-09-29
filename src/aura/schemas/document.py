@@ -21,3 +21,10 @@ class DocumentResponse(BaseModel):
     mime_type: str
     processing_status: str
     created_at: datetime
+    processing_error: str | None = None
+
+
+class DocumentTextResponse(BaseModel):
+    id: UUID
+    filename: str
+    text: str

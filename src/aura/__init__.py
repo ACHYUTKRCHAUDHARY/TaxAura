@@ -1,2 +1,4 @@
 def main() -> None:
-    print("Hello from aura!")
+    import uvicorn
+
+    uvicorn.run("aura.main:app", host="127.0.0.1", port=8000)

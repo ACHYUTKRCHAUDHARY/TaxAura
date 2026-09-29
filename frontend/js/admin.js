@@ -14,7 +14,7 @@ document.querySelector("#rule-form").addEventListener("submit", async (event) =>
   const sourceUrl = document.querySelector("#source-url").value.trim();
   try {
     const result = await apiFetch("/knowledge/rules", {method: "POST", body: JSON.stringify({source_name: document.querySelector("#source-name").value.trim(), source_url: sourceUrl || null, content: document.querySelector("#source-content").value.trim()})});
-    showMessage(message, `${result.chunks_created} verified knowledge chunks created.`, true); form.reset();
+    showMessage(message, `${result.chunks_created} knowledge chunks created. ${result.semantic_indexed ? "ChromaDB indexing complete." : "Keyword search ready; semantic indexing unavailable. Run reindex after Chroma is available."}`, true); form.reset();
   } catch (error) { showMessage(message, error.message); }
   finally { setBusy(button, false); }
 });

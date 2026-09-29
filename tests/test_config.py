@@ -20,3 +20,15 @@ def test_production_rejects_placeholder_secret() -> None:
             environment="production",
             jwt_secret_key="replace-this-with-a-long-random-secret",
         )
+
+
+def test_managed_postgres_url_is_normalized():
+    assert (
+        Settings(database_url="postgres://user:pass@host/db").database_url
+        == "postgresql+asyncpg://user:pass@host/db"
+    )
+
+
+def test_cloud_chroma_requires_credentials():
+    with pytest.raises(ValidationError):
+        Settings(chroma_mode="cloud", chroma_api_key=None, chroma_tenant=None, chroma_database=None)

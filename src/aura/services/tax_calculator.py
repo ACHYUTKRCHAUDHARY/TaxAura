@@ -46,6 +46,9 @@ def _result(taxable_income: Decimal, regime: str) -> RegimeResult:
         tax = _slab_tax(taxable_income, slabs)
         if taxable_income <= Decimal(1200000):
             tax = max(ZERO, tax - min(tax, Decimal(60000)))
+        else:
+            # Section 87A marginal relief for normal-rate income, AY 2026-27.
+            tax = min(tax, taxable_income - Decimal(1200000))
     cess = tax * CESS_RATE
     money = lambda value: value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     return RegimeResult(
