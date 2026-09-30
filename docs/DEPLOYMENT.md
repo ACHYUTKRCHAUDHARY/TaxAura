@@ -1,101 +1,98 @@
-# Deploy TaxAura: Render + PostgreSQL + ChromaDB
+# Self-hosted TaxAura with Gemini
 
-The frontend and API run together on Render. You do not need Vercel, Docker Desktop, or Linux on your Windows computer. Render builds the included Dockerfile remotely; it installs Tesseract OCR and the Chroma embedding model.
+## Local Docker setup
 
-## 1. Get the completed code
-
-Merge the completion pull request into `main` (or choose its branch for a preview deployment). Pull the merged changes:
-
-```powershell
-git pull origin main
-uv sync --frozen
-```
-
-## 2. Provision data services
-
-Create a managed PostgreSQL database with your preferred provider and copy its **direct, non-pooler** connection URL. No pgvector extension is required. Keep the database credentials private. Use TLS for an external database:
-
-```env
-DATABASE_URL=postgresql+asyncpg://USER:PASSWORD@HOST:5432/DATABASE?ssl=require
-```
-
-Percent-encode special characters in the username/password. For this asyncpg driver, use `ssl=require` instead of `sslmode=require` and omit libpq-only parameters such as `channel_binding`. For certificate and hostname verification, use `ssl=verify-full` with a provider trusted by the system CA store.
-
-Create a database in [Chroma Cloud](https://www.trychroma.com/) and obtain:
-
-```env
-CHROMA_MODE=cloud
-CHROMA_API_KEY=your-private-key
-CHROMA_TENANT=your-tenant-id
-CHROMA_DATABASE=your-database-name
-```
-
-PostgreSQL stores users, upload bytes, extracted text, and chunks. Chroma stores vectors, chunk IDs, and ownership metadata. Chroma embedding inference runs in the app using all-MiniLM-L6-v2; Chroma Cloud does not automatically provide the language model. Keep Chroma credentials server-side. Configure database backups and retention with your providers.
-
-## 3. Deploy the Blueprint
-
-After `render.yaml` is merged into `main`, open:
-
-https://dashboard.render.com/blueprint/new?repo=https://github.com/ACHYUTKRCHAUDHARY/TaxAura
-
-Connect GitHub, select the repository, fill in `DATABASE_URL` and the three Chroma credentials, review the configuration, then click **Apply**. The Blueprint generates a JWT secret. Do not rotate it unintentionally or existing login tokens will stop working.
-
-The provided Blueprint selects Render's free web plan for a demo; verify current provider limits and billing before applying. Chroma Cloud and PostgreSQL are separate services, and their plans are not included. CPU-based embeddings may require a larger Render instance. An idle free service may suspend; queued jobs resume when the app runs again. For continuous background processing, select an always-on paid service. There is no promise of a permanently free production deployment.
-
-The start script runs `alembic upgrade head` then starts one Uvicorn worker on `$PORT`. Use `/ready` as the health check. This checks the database schema; optional AI/Chroma outages degrade to keyword/source-excerpt mode rather than failing the app.
-
-Set `ALLOWED_HOSTS` to your exact `your-service.onrender.com` hostname after deployment. Add any custom hostname explicitly. The Blueprint initially permits `*.onrender.com`. Leave `ALLOWED_ORIGINS` empty for this same-origin frontend.
-
-Open `https://YOUR-SERVICE.onrender.com/app/`.
-
-## 4. Create an admin and load knowledge
-
-You can run these from Windows with a local `.env` that points to the deployed PostgreSQL and Chroma services, or from a Render shell if your plan offers one:
+1. Install Docker Desktop on Windows with the WSL2 backend.
+2. Clone the repository and copy `.env.example` to `.env`.
+3. Set a random `JWT_SECRET_KEY` using the README's PowerShell command.
+4. Add your server-side `GEMINI_API_KEY` from Google AI Studio. Leave it empty to use source excerpts without generation.
+5. Run `docker compose up --build`.
+6. Open http://localhost:8080/app/.
+7. Load knowledge and create an admin:
 
 ```powershell
-uv run python -m aura.scripts.create_admin --email you@example.com --name "TaxAura Admin"
-uv run python -m aura.scripts.seed_knowledge
+docker compose exec app .venv/bin/python -m aura.scripts.seed_knowledge
+docker compose exec app .venv/bin/python -m aura.scripts.create_admin --email you@example.com --name "TaxAura Admin"
 ```
 
-The admin command prompts for a password. Sign in at `/app/login.html`. The admin knowledge page accepts a source name, official URL, and reviewed text. The included starter summary is intentionally small and dated to AY 2026-27; add reviewed material for the questions you want the assistant to cover.
+The app waits for PostgreSQL health and probes Chroma's `/api/v2/heartbeat`, applies migrations, then starts one Uvicorn worker. App and Chroma ports bind only to localhost. PostgreSQL has no published host port. The bundled database password is for local development only.
 
-## 5. Enable generated answers (optional)
+## Persistent data
 
-The default `AI_MODE=extractive` returns matching source excerpts, explicitly labeled. Chroma semantic search works independently of Ollama.
+- PostgreSQL 17: `postgres_data` at `/var/lib/postgresql/data`.
+- Chroma 1.5.9: `chroma_data` at `/data`.
+- Upload bytes and extracted text live in PostgreSQL. Vector records live in Chroma.
+- Embeddings use all-MiniLM-L6-v2 locally; no Gemini embedding API calls are needed.
 
-For generated RAG answers and the LangGraph advisor, run Ollama on a separate host reachable privately from the app, install `qwen2.5:3b`, and set:
+Named volumes survive container restarts, image rebuilds, and `docker compose down`. They do not survive `docker compose down -v`, deliberate volume removal, or losing the host disk. Back up your data before host/image upgrades. Use a new collection and reindex if you change embedding models.
+
+## Use an existing PostgreSQL database
+
+Set `DATABASE_URL` in `.env` to its direct asyncpg-compatible connection string, for example:
 
 ```env
-AI_MODE=ollama
-OLLAMA_BASE_URL=http://YOUR-PRIVATE-OLLAMA-HOST:11434
-OLLAMA_MODEL=qwen2.5:3b
-AI_TIMEOUT_SECONDS=45
+DATABASE_URL=postgresql+asyncpg://USER:PASSWORD@HOST:5432/DATABASE?ssl=verify-full
 ```
 
-`localhost` on Render refers to the Render container, not your laptop. Do not expose an unauthenticated Ollama endpoint on the public internet. If your model host requires a specific authentication scheme, add that integration before connecting it. If Ollama is unavailable, the RAG endpoint returns labeled excerpts; the agent endpoint returns a service-unavailable error. The dashboard uses the RAG endpoint; `/api/v1/advisor/ask` is available separately.
+Percent-encode special characters in credentials. Asyncpg accepts `ssl`, not libpq-only `sslmode` or `channel_binding` query parameters. Use your provider's TLS instructions.
 
-## 6. Verify the deployment
+By default the unused local Postgres service still starts. With Docker Compose 2.24.4 or later, create `compose.external-db.yml`:
 
-1. `/health` and `/ready` return HTTP 200.
-2. Register, log out, log in, and open the dashboard.
-3. Upload a text PDF or a clear PNG/JPEG; wait for COMPLETED, then View text.
-4. Log in as a second user and confirm the first user's uploads are absent.
-5. Compare salary ₹13,00,000: new-regime estimate should be ₹26,000 for the supported AY 2026-27 scope.
-6. Ask about a seeded rule; confirm source names/links. Check “Include my documents” only when you want personal context used.
-7. Delete a document and confirm it disappears.
-8. Restart the service and confirm accounts and completed uploads remain.
+```yaml
+services:
+  postgres:
+    profiles: [bundled-database]
+  app:
+    depends_on: !override
+      chroma:
+        condition: service_started
+```
 
-## Operations and limitations
+Then run:
 
-- Chroma indexes are rebuildable: `uv run python -m aura.scripts.reindex`. Run maintenance with document writes paused to avoid concurrent index rebuild/delete races. Never change embedding models in an existing collection without a new collection name and full reindex.
-- If Chroma indexing fails, document extraction still completes and keyword search remains available. Run reindex after recovery. Index completion is not part of the COMPLETED document status.
-- New uploads are stored in PostgreSQL, with a default 10 MB file limit and 50 documents per account. Temporary files are removed after persistence. This is a bounded small-app design; use private object storage and quotas for large workloads.
-- Existing uploads from the old version still use their original filesystem paths. Keep those files available during migration; do not delete old storage until all needed files have been re-uploaded into durable storage. Existing extracted text survives migration.
-- Migration `20260929_02` removes old pgvector embedding columns; take a backup first. Rebuild embeddings with the Chroma reindex command. Downgrading does not restore deleted vectors.
-- Text PDFs (up to 100 pages / 200,000 extracted characters) and image OCR are supported. Scanned image-only PDFs must first be converted to PNG/JPEG. Password-protected PDFs must be unlocked before upload.
-- Jobs are claimed with PostgreSQL row locks in a transaction. A crashed worker leaves the job queued. The UI shows QUEUED until processing commits; failures can be retried manually.
-- Optional n8n events are best-effort, not a durable notification outbox. Configure `N8N_WEBHOOK_URL` and `N8N_WEBHOOK_SECRET` only when the receiver verifies the HMAC signature.
-- This is not a tax filing system. It excludes special-rate income, capital gains, surcharge, senior-citizen variations and many deduction rules. It supports resident salaried individuals below 60 for FY 2025-26 / AY 2026-27 and salary up to ₹50 lakh.
-- Before opening unrestricted public signup, add edge rate limiting/abuse protection, verified-email recovery, monitoring, malware scanning and a documented retention policy. No load test, penetration test, or live cloud deployment is implied by the repository tests.
+```powershell
+docker compose -f docker-compose.yml -f compose.external-db.yml up --build
+```
 
-References: [Render Docker](https://render.com/docs/docker), [health checks](https://render.com/docs/health-checks), [free services](https://render.com/docs/free), [Chroma clients](https://docs.trychroma.com/reference/python), [official tax guidance](https://www.incometax.gov.in/iec/foportal/help/individual/return-applicable-1).
+Inside containers, `localhost` means that container. To reach PostgreSQL installed directly on your Windows host, use `host.docker.internal` as the database hostname.
+
+## Gemini configuration
+
+The app uses `langchain-google-genai`, which calls Google's Gemini API. `GEMINI_API_KEY` stays on the backend. `GEMINI_MODEL` defaults to `gemini-3.8-flash` and can be overridden with a model available to your project. Generation requests have a 45-second total timeout and no automatic model retries. RAG falls back to excerpts on missing credentials, quota exhaustion, unavailable models, or empty responses. The agent endpoint can return 503 if its tool-driven run fails.
+
+The `.env` template also contains `JWT_SECRET_KEY` because removing it would break authenticated production startup. Database connection settings alone cannot configure the whole app.
+
+General chat sends the question and selected reviewed tax rules to Gemini. Private document queries return local excerpts; raw uploads, filenames, and extracted personal document content are not sent by that flow. Do not type sensitive details into a general question. The advisor's status tool returns numbered statuses, not filenames. Add only public, reviewed guidance through admin knowledge ingestion.
+
+Google's free tier has rate/model limits, and its pricing page says free-tier content may be used to improve products. Paid usage has different terms. Confirm eligibility and limits in your own project; no code change can guarantee unlimited free API usage.
+
+## Free hosting choices
+
+**Local machine:** this is the supplied, persistent setup without a cloud hosting bill. It is available while Docker and your computer are running. Gemini still needs internet and remains subject to quota. The local embedding model downloads during the first image build.
+
+**Your own VM:** run the same Compose stack on a VM that has sufficient memory and persistent storage. Free VM offers depend on account eligibility, region, capacity, and provider terms; this project does not provision or promise one. Keep the default localhost bindings and access the app through an SSH tunnel, or deliberately configure TLS/reverse proxy, firewall, strong database credentials, exact allowed hosts, backups, and abuse controls for a public deployment. Never expose the unauthenticated Chroma port publicly.
+
+**Render Free:** free web services cannot attach persistent disks. Their filesystem is ephemeral; local Chroma/PostgreSQL data would be lost across replacement/redeployment. Render also does not launch `docker-compose.yml` as one service. The app-only `render.yaml` requires external persistent PostgreSQL and Chroma services, and a reachable secured Chroma endpoint. Its default TLS setting must match the external endpoint/port. A private localhost Chroma instance on your laptop is not reachable from Render. Prefer the local Compose stack for the requested free self-hosted setup.
+
+## Verification after startup
+
+```powershell
+Invoke-RestMethod http://localhost:8080/health
+Invoke-RestMethod http://localhost:8080/ready
+docker compose ps
+```
+
+Register, sign in, upload a text PDF, wait for completion, preview its text, compare tax regimes, and ask a seeded-rule question. Check source labels. Try “Include my documents”; it should return excerpts rather than generated content. Delete the upload, restart containers without deleting volumes, and confirm remaining data persists.
+
+## Troubleshooting
+
+- App exits immediately: replace the JWT placeholder; inspect `docker compose logs app`.
+- Chroma startup timeout: verify `CHROMA_HOST=chroma`, `CHROMA_PORT=8000`, and `docker compose logs chroma`.
+- Source excerpts instead of generation: check Gemini key/model/quota and app logs. Never paste keys into issues.
+- No matching source: run the seed command or ingest reviewed public guidance as admin.
+- Semantic search unavailable: verify Chroma persistence/connectivity and run `docker compose exec app .venv/bin/python -m aura.scripts.reindex`.
+- First image build cannot download MiniLM: restore internet access to the model download host and rebuild. No model downloads use Gemini quota.
+- Existing release upgrade: back up PostgreSQL. Older filesystem uploads must remain available or be re-uploaded; old vector columns removed by the previous migration require reindexing into the new self-hosted Chroma service.
+- Failed document processing: text PDFs and clear images are supported; scanned PDFs must be converted to images. Account/file/page limits are documented in the README.
+
+References: [Chroma Docker](https://docs.trychroma.com/deployment/docker), [Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing), [Gemini API keys](https://ai.google.dev/gemini-api/docs/api-key), [Render free limits](https://render.com/docs/free).

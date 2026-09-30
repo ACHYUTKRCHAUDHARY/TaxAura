@@ -29,6 +29,11 @@ def test_managed_postgres_url_is_normalized():
     )
 
 
-def test_cloud_chroma_requires_credentials():
-    with pytest.raises(ValidationError):
-        Settings(chroma_mode="cloud", chroma_api_key=None, chroma_tenant=None, chroma_database=None)
+def test_self_hosted_chroma_defaults():
+    settings = Settings(_env_file=None)
+    assert settings.chroma_host == "chroma"
+    assert settings.chroma_port == 8000
+
+
+def test_blank_gemini_key_is_optional():
+    assert Settings(gemini_api_key="").gemini_api_key is None

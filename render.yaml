@@ -1,3 +1,5 @@
+# App-only option. Chroma and PostgreSQL must already exist elsewhere.
+# Render Free cannot provide persistent volumes for this Compose stack.
 services:
   - type: web
     name: taxaura
@@ -16,16 +18,18 @@ services:
       - key: ALLOWED_ORIGINS
         value: ""
       - key: CHROMA_MODE
-        value: cloud
-      - key: CHROMA_API_KEY
+        value: http
+      - key: CHROMA_HOST
         sync: false
-      - key: CHROMA_TENANT
+      - key: CHROMA_PORT
+        value: "8000"
+      - key: CHROMA_SSL
+        value: "true"
+      - key: GEMINI_API_KEY
         sync: false
-      - key: CHROMA_DATABASE
-        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-3.8-flash
       - key: AI_MODE
-        value: extractive
+        value: gemini
       - key: DOCUMENT_WORKER_ENABLED
         value: "true"
-      - key: MAX_DOCUMENTS_PER_USER
-        value: "50"
