@@ -19,7 +19,6 @@ class Settings(BaseSettings):
     chroma_port: int = Field(default=8000, ge=1, le=65535)
     chroma_ssl: bool = False
     upload_directory: Path = Path("storage/uploads")
-    frontend_directory: Path = Path("frontend")
     gemini_api_key: SecretStr | None = None
     gemini_model: str = "gemini-3.8-flash"
     n8n_webhook_url: str | None = None

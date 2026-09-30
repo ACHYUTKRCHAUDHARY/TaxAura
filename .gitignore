@@ -28,3 +28,10 @@ Thumbs.db
 # Runtime data
 storage/
 logs/
+
+# Next.js / Node
+node_modules/
+.next/
+*.tsbuildinfo
+playwright-report/
+test-results/

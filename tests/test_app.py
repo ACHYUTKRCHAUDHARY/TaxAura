@@ -22,9 +22,7 @@ def test_tax_endpoint_requires_authentication() -> None:
     assert response.status_code == 401
 
 
-def test_frontend_is_served_with_security_headers() -> None:
+def test_api_does_not_expose_frontend_source() -> None:
     with TestClient(app) as client:
-        response = client.get("/app/")
-    assert response.status_code == 200
-    assert "Tax clarity" in response.text
-    assert "default-src 'self'" in response.headers["content-security-policy"]
+        for path in ("/app/", "/app/package.json", "/app/.env.local"):
+            assert client.get(path).status_code == 404

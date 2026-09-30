@@ -9,7 +9,6 @@ RUN uv sync --frozen --no-dev
 # Warm the default Chroma embedding model once; do not redownload on each request.
 ENV HOME=/home/app
 RUN mkdir -p /home/app && uv run --no-sync python -c "from chromadb.utils.embedding_functions import DefaultEmbeddingFunction; DefaultEmbeddingFunction()(['TaxAura model warmup'])"
-COPY frontend ./frontend
 COPY alembic.ini ./
 COPY scripts ./scripts
 RUN useradd --create-home --uid 10001 app && chown -R app:app /app /home/app
