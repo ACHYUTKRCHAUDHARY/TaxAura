@@ -1,103 +1,128 @@
-"""Chroma holds a rebuildable semantic index; PostgreSQL owns source records."""
+"""pgvector repository: database-ranked results with authorization inside SQL."""
 
-import asyncio
 import logging
-from functools import lru_cache
 from uuid import UUID
 
-from aura.core.config import settings
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from aura.db.models import Document, DocumentChunk, TaxRuleChunk
+from aura.services import embeddings
 
 logger = logging.getLogger(__name__)
 
 
-@lru_cache(maxsize=1)
-def chroma_client():
-    import chromadb
-    from chromadb.config import Settings
+async def index_chunks(chunks) -> bool:
+    """Populate ORM rows in the caller's transaction; never commit separately.
 
-    options = Settings(anonymized_telemetry=False)
-    if settings.chroma_mode == "http":
-        return chromadb.HttpClient(
-            host=settings.chroma_host,
-            port=settings.chroma_port,
-            ssl=settings.chroma_ssl,
-            settings=options,
-        )
-    raise RuntimeError("Semantic search is disabled")
-
-
-def collection(kind: str):
-    # Chroma's local all-MiniLM-L6-v2 embedding function is independent of Gemini.
-    # Only vectors/IDs/metadata are persisted in Chroma, not private source text.
-    return chroma_client().get_or_create_collection(name=f"taxaura-{kind}-v1")
-
-
-def _index(records: list[dict], kind: str) -> None:
-    from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
-
-    embed = DefaultEmbeddingFunction()
-    target = collection(kind)
-    for offset in range(0, len(records), 32):
-        batch = records[offset : offset + 32]
-        target.upsert(
-            ids=[r["id"] for r in batch],
-            embeddings=embed([r["content"] for r in batch]),
-            metadatas=[r["metadata"] for r in batch],
-        )
-
-
-async def index_chunks(chunks, kind: str) -> bool:
-    if settings.chroma_mode == "disabled":
-        return False
-    records = [
-        {
-            "id": str(c.id),
-            "content": c.content,
-            "metadata": (
-                {"user_id": str(c.user_id), "document_id": str(c.document_id)}
-                if kind == "documents"
-                else {"kind": "rule"}
-            ),
-        }
-        for c in chunks
-    ]
-    try:
-        await asyncio.to_thread(_index, records, kind)
+    Embedding failures leave source text available for keyword retrieval and reindex.
+    Database failures are NOT swallowed: the caller rolls back the transaction.
+    """
+    if not chunks:
         return True
-    except Exception:
-        logger.warning(
-            "Chroma indexing unavailable; run the reindex command to recover", exc_info=True
-        )
-        return False
-
-
-async def semantic_ids(question: str, kind: str, user_id: UUID | None = None) -> list[UUID]:
-    if settings.chroma_mode == "disabled":
-        return []
-    if kind == "documents" and user_id is None:
-        return []
-
-    def query():
-        target = collection(kind)
-        result = target.query(
-            query_texts=[question],
-            n_results=6,
-            where={"user_id": str(user_id)} if kind == "documents" else None,
-            include=["distances"],
-        )
-        return [UUID(value) for value in result["ids"][0]]
-
     try:
-        return await asyncio.to_thread(query)
-    except Exception:  # noqa: BLE001 - optional dependency boundary
-        logger.warning("Chroma query unavailable; falling back to PostgreSQL keywords")
-        return []
+        vectors = await embeddings.embed([chunk.content for chunk in chunks])
+    except Exception:  # noqa: BLE001 - isolate optional model inference, not database errors
+        logger.warning("Embedding generation unavailable; run the reindex command to recover")
+        return False
+    for chunk, vector in zip(chunks, vectors, strict=True):
+        chunk.embedding = vector
+        chunk.embedding_model = embeddings.MODEL_ID
+    return True
 
 
-async def delete_document_vectors(document_id: UUID, user_id: UUID) -> None:
-    if settings.chroma_mode != "disabled":
-        await asyncio.to_thread(
-            lambda: collection("documents").delete(
-                where={"$and": [{"document_id": str(document_id)}, {"user_id": str(user_id)}]}
+async def query_vector(question: str) -> list[float] | None:
+    try:
+        return (await embeddings.embed([question]))[0]
+    except Exception:  # noqa: BLE001 - isolate optional model inference, not database errors
+        logger.warning("Query embedding unavailable; using PostgreSQL keyword retrieval")
+        return None
+
+
+def _keywords(column, question):
+    document = func.to_tsvector("english", column)
+    query = func.websearch_to_tsquery("english", question)
+    return document.op("@@")(query), func.ts_rank(document, query).desc()
+
+
+async def retrieve_rules(question: str, session: AsyncSession, limit: int = 6):
+    vector = await query_vector(question)
+    hits = []
+    if vector is not None:
+        hits = list(
+            await session.scalars(
+                select(TaxRuleChunk)
+                .where(
+                    TaxRuleChunk.embedding.is_not(None),
+                    TaxRuleChunk.embedding_model == embeddings.MODEL_ID,
+                )
+                .order_by(TaxRuleChunk.embedding.cosine_distance(vector))
+                .limit(limit)
             )
         )
+    # Backfilled or temporarily unembedded records remain discoverable by keywords.
+    if len(hits) < limit:
+        match, rank = _keywords(TaxRuleChunk.content, question)
+        hits.extend(
+            await session.scalars(
+                select(TaxRuleChunk)
+                .where(match, TaxRuleChunk.id.not_in([c.id for c in hits]))
+                .order_by(rank)
+                .limit(limit - len(hits))
+            )
+        )
+    return hits
+
+
+async def retrieve_documents(
+    question: str, user_id: UUID | None, session: AsyncSession, limit: int = 4
+):
+    if user_id is None:
+        return []
+    vector = await query_vector(question)
+    ownership = (
+        DocumentChunk.user_id == user_id,
+        Document.user_id == user_id,
+        Document.processing_status == "COMPLETED",
+    )
+    hits = []
+    if vector is not None:
+        # Materialize the authorized subset FIRST, then compute exact cosine top-K.
+        # This avoids ANN post-filter starvation when many other users have closer hits.
+        owned = (
+            select(DocumentChunk.id, DocumentChunk.embedding)
+            .join(Document, Document.id == DocumentChunk.document_id)
+            .where(
+                *ownership,
+                DocumentChunk.embedding.is_not(None),
+                DocumentChunk.embedding_model == embeddings.MODEL_ID,
+            )
+            .cte("owned_chunks")
+            .prefix_with("MATERIALIZED")
+        )
+        hits = list(
+            (
+                await session.execute(
+                    select(DocumentChunk, Document.filename)
+                    .join(Document, Document.id == DocumentChunk.document_id)
+                    .join(owned, owned.c.id == DocumentChunk.id)
+                    .where(*ownership)
+                    .order_by(owned.c.embedding.cosine_distance(vector))
+                    .limit(limit)
+                )
+            ).all()
+        )
+    if len(hits) < limit:
+        match, rank = _keywords(DocumentChunk.content, question)
+        hits.extend(
+            (
+                await session.execute(
+                    select(DocumentChunk, Document.filename)
+                    .join(Document, Document.id == DocumentChunk.document_id)
+                    .where(*ownership, match, DocumentChunk.id.not_in([c.id for c, _ in hits]))
+                    .order_by(rank)
+                    .limit(limit - len(hits))
+                )
+            ).all()
+        )
+    return hits

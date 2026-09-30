@@ -1,6 +1,7 @@
-"""Rebuild Chroma vectors from authoritative PostgreSQL records."""
+"""Backfill or regenerate pgvector embeddings from stored chunk text, in batches."""
 
 import asyncio
+from uuid import UUID
 
 from sqlalchemy import select
 
@@ -11,15 +12,24 @@ from aura.services.vector_store import index_chunks
 
 async def reindex():
     try:
-        async with AsyncSessionFactory() as session:
-            for model, kind in ((TaxRuleChunk, "rules"), (DocumentChunk, "documents")):
-                rows = await session.stream_scalars(select(model).execution_options(yield_per=32))
-                count = 0
-                async for batch in rows.partitions(32):
-                    if not await index_chunks(batch, kind):
-                        raise RuntimeError(f"Could not index {kind}; check Chroma configuration")
+        for model, kind in ((TaxRuleChunk, "rules"), (DocumentChunk, "documents")):
+            count = 0
+            last_id: UUID | None = None
+            while True:
+                # Short, row-locked batches prevent delete/reindex races and unbounded transactions.
+                async with AsyncSessionFactory() as session:
+                    statement = select(model).order_by(model.id).limit(32).with_for_update()
+                    if last_id is not None:
+                        statement = statement.where(model.id > last_id)
+                    batch = list(await session.scalars(statement))
+                    if not batch:
+                        break
+                    if not await index_chunks(batch):
+                        raise RuntimeError(f"Could not embed {kind}; check the local model cache")
+                    last_id = batch[-1].id
+                    await session.commit()
                     count += len(batch)
-                print(f"Indexed {count} {kind} chunks")
+            print(f"Indexed {count} {kind} chunks")
     finally:
         await close_database()
 

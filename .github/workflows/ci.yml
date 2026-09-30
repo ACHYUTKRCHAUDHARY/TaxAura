@@ -7,7 +7,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:17
+        image: pgvector/pgvector:0.8.2-pg17
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -21,7 +21,6 @@ jobs:
     env:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/taxaura_test
       TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/taxaura_test
-      CHROMA_MODE: disabled
       DOCUMENT_WORKER_ENABLED: "false"
     steps:
       - uses: actions/checkout@v4
@@ -31,7 +30,7 @@ jobs:
           python-version: "3.14"
       - run: uv sync --frozen --dev
       - run: uv run ruff check src tests
-      - run: uv run alembic upgrade head
+      - run: uv run python tests/check_migrations.py
       - run: uv run pytest -q
   frontend:
     runs-on: ubuntu-latest
@@ -70,10 +69,8 @@ jobs:
       - name: Verify frontend proxy reaches FastAPI
         run: test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/api/v1/users/me)" = "401"
       - run: docker compose exec -T app .venv/bin/python -m aura.scripts.seed_knowledge
-      - name: Verify Chroma has real MiniLM embeddings
-        run: >-
-          docker compose exec -T app .venv/bin/python -c
-          "from aura.services.vector_store import collection; c=collection('rules'); assert c.count()>0; assert c.query(query_texts=['rebate'], n_results=1)['ids'][0]"
+      - name: Verify real local embeddings and database vector retrieval
+        run: docker compose exec -T app .venv/bin/python -m aura.scripts.verify_vectors
       - uses: actions/setup-node@v4
         with:
           node-version: "22"

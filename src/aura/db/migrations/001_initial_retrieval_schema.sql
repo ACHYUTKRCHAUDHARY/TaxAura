@@ -1,3 +1,2 @@
--- Legacy manual schema retired.
--- Use: uv run alembic upgrade head
--- PostgreSQL owns relational data; ChromaDB owns semantic vectors.
+-- Legacy manual schema retired. Use: uv run alembic upgrade head
+-- PostgreSQL owns relational data and pgvector embeddings.

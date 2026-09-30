@@ -24,7 +24,11 @@ async def add_tax_rule(
     _: AdminUser,
     session: AsyncSession = Depends(get_session),
 ) -> TaxRuleIngestResponse:
-    count, indexed = await ingest_tax_rule(payload, session)
+    try:
+        count, indexed = await ingest_tax_rule(payload, session)
+    except Exception as error:
+        await session.rollback()
+        raise HTTPException(status_code=503, detail="Knowledge storage is unavailable.") from error
     return TaxRuleIngestResponse(chunks_created=count, semantic_indexed=indexed)
 
 
@@ -41,5 +45,5 @@ async def ask_rag(
     except Exception as error:
         raise HTTPException(
             status_code=503,
-            detail="RAG service is unavailable. Verify PostgreSQL and ChromaDB.",
+            detail="RAG service is unavailable. Verify PostgreSQL and the vector extension.",
         ) from error
