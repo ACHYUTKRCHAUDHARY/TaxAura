@@ -5,7 +5,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from aura.api.router import api_router
@@ -38,12 +37,6 @@ app = FastAPI(
 )
 
 app.include_router(api_router, prefix="/api/v1")
-if settings.frontend_directory.exists():
-    app.mount(
-        "/app",
-        StaticFiles(directory=settings.frontend_directory, html=True),
-        name="frontend",
-    )
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
 app.add_middleware(
@@ -57,7 +50,7 @@ app.add_middleware(
 
 @app.get("/")
 def root():
-    return {"message": "Welcome to TaxAura API", "frontend": "/app", "docs": "/docs"}
+    return {"message": "Welcome to TaxAura API", "docs": "/docs"}
 
 
 @app.get("/health")

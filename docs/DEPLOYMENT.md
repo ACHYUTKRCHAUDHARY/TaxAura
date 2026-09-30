@@ -7,7 +7,7 @@
 3. Set a random `JWT_SECRET_KEY` using the README's PowerShell command.
 4. Add your server-side `GEMINI_API_KEY` from Google AI Studio. Leave it empty to use source excerpts without generation.
 5. Run `docker compose up --build`.
-6. Open http://localhost:8080/app/.
+6. Open http://localhost:8080/.
 7. Load knowledge and create an admin:
 
 ```powershell
@@ -74,11 +74,34 @@ Google's free tier has rate/model limits, and its pricing page says free-tier co
 
 **Render Free:** free web services cannot attach persistent disks. Their filesystem is ephemeral; local Chroma/PostgreSQL data would be lost across replacement/redeployment. Render also does not launch `docker-compose.yml` as one service. The app-only `render.yaml` requires external persistent PostgreSQL and Chroma services, and a reachable secured Chroma endpoint. Its default TLS setting must match the external endpoint/port. A private localhost Chroma instance on your laptop is not reachable from Render. Prefer the local Compose stack for the requested free self-hosted setup.
 
+## Vercel frontend + Render API
+
+The website is now a separate Next.js application in `frontend/`. FastAPI serves APIs only; it no longer serves source files or HTML. Old `/app/*.html` website links redirect to the new pages on the frontend.
+
+1. Deploy the backend using the root `Dockerfile` and `render.yaml`. Supply persistent PostgreSQL and Chroma connections, your Gemini key, and a random JWT secret. Verify `https://YOUR-API.onrender.com/ready` returns `READY` before deploying the frontend.
+2. In Vercel, import this GitHub repository. Set **Root Directory** to **frontend** and **Framework Preset** to **Next.js**. Use Node.js **22.x**, install command `npm ci`, and build command `npm run build`. Keep the framework's default output setting; do not set `out` or `.next/standalone` as the output directory.
+3. Set these environment variables for Production and Preview:
+
+   ```env
+   API_ORIGIN=https://YOUR-API.onrender.com
+   NEXT_PUBLIC_MAX_UPLOAD_MB=4
+   ```
+
+   `API_ORIGIN` is only the origin: no trailing `/api/v1`. Do not add `NEXT_PUBLIC_` to it. Never put `GEMINI_API_KEY`, the JWT signing secret, database credentials, or Chroma credentials in frontend variables.
+4. Deploy. Visit the Vercel URL, register, compare tax estimates, and upload a small PDF. The browser calls same-origin `/api/v1/*`; the Next.js server forwards only supported API routes to FastAPI with the bearer token. CORS can remain empty because the proxy makes the cross-host request server-side. Render's `ALLOWED_HOSTS` must include the actual API hostname.
+5. Seed the backend knowledge and create an administrator using its shell or an authenticated environment connected to the same database. The commands are `python -m aura.scripts.seed_knowledge` and `python -m aura.scripts.create_admin --email you@example.com --name "TaxAura Admin"` in the installed backend environment. For Docker use `.venv/bin/python`.
+
+Vercel Functions impose a 4.5 MB request-body limit, so Vercel uploads are capped at **4 MB** to leave room for multipart overhead. Self-hosted Docker builds default to **10 MB**. `NEXT_PUBLIC_MAX_UPLOAD_MB` is a build-time setting; rebuild after changing it. The backend still independently enforces its own file size limit.
+
+The proxy permits up to 55 seconds for API responses; general Gemini generation has its own 45-second backend timeout. A sleeping Render Free service can cause the first request to fail; wait for `/ready` and retry. Persistent Chroma requires a separate persistent service or VM; Vercel does not host Chroma. A public, unauthenticated Chroma endpoint is not a safe deployment.
+
+For local production: `docker compose up --build` runs Next.js on port 8080, FastAPI on port 10000, PostgreSQL, and Chroma. For frontend development against that stack, use `frontend/.env.local` with `API_ORIGIN=http://127.0.0.1:10000`, then `npm run dev` in `frontend/`.
+
 ## Verification after startup
 
 ```powershell
-Invoke-RestMethod http://localhost:8080/health
-Invoke-RestMethod http://localhost:8080/ready
+Invoke-RestMethod http://localhost:10000/health
+Invoke-RestMethod http://localhost:10000/ready
 docker compose ps
 ```
 
@@ -95,4 +118,4 @@ Register, sign in, upload a text PDF, wait for completion, preview its text, com
 - Existing release upgrade: back up PostgreSQL. Older filesystem uploads must remain available or be re-uploaded; old vector columns removed by the previous migration require reindexing into the new self-hosted Chroma service.
 - Failed document processing: text PDFs and clear images are supported; scanned PDFs must be converted to images. Account/file/page limits are documented in the README.
 
-References: [Chroma Docker](https://docs.trychroma.com/deployment/docker), [Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing), [Gemini API keys](https://ai.google.dev/gemini-api/docs/api-key), [Render free limits](https://render.com/docs/free).
+References: [Chroma Docker](https://docs.trychroma.com/deployment/docker), [Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing), [Gemini API keys](https://ai.google.dev/gemini-api/docs/api-key), [Render free limits](https://render.com/docs/free), [Vercel function limits](https://vercel.com/docs/functions/limitations), [Next.js deployment](https://nextjs.org/docs/app/getting-started/deploying).
