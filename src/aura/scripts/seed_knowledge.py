@@ -29,7 +29,7 @@ async def seed():
                 ),
                 session,
             )
-            print(f"Created {count} chunks; Chroma indexed: {indexed}")
+            print(f"Created {count} chunks; pgvector indexed: {indexed}")
     finally:
         await close_database()
 

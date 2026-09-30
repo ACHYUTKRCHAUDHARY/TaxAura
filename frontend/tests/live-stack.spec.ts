@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 
-// A valid one-page text PDF. The real backend parses this with pypdf and indexes it in Chroma.
+// A valid one-page text PDF. The real backend parses this with pypdf and indexes it in pgvector.
 function salaryPdf() {
   const stream =
     "BT /F1 14 Tf 50 750 Td (Form 16 salary document. Annual salary is 1200000 rupees.) Tj ET";
@@ -25,7 +25,7 @@ function salaryPdf() {
   return Buffer.from(pdf);
 }
 
-test("real browser → Next.js → FastAPI → PostgreSQL and Chroma document and tax journey", async ({
+test("real browser → Next.js → FastAPI → PostgreSQL and pgvector document and tax journey", async ({
   page,
   request,
 }) => {

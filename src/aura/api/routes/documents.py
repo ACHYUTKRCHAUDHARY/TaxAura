@@ -11,7 +11,6 @@ from aura.db.models import Document, User
 from aura.db.session import get_session
 from aura.schemas.document import DocumentResponse, DocumentTextResponse, DocumentUploadAccepted
 from aura.services.file_storage import InvalidFileSignatureError, UploadTooLargeError, save_upload
-from aura.services.vector_store import delete_document_vectors
 
 router = APIRouter()
 
@@ -124,12 +123,7 @@ async def delete_document(
     document_id: UUID, current_user: CurrentUser, session: AsyncSession = Depends(get_session)
 ) -> None:
     document = await owned_document(document_id, current_user.id, session, lock=True)
-    try:
-        await delete_document_vectors(document.id, current_user.id)
-    except Exception as error:
-        raise HTTPException(
-            status_code=503, detail="Vector cleanup unavailable. Please retry deletion shortly."
-        ) from error
+    # ON DELETE CASCADE removes chunk text and vectors in the same transaction.
     legacy_path = document.storage_path
     await session.delete(document)
     await session.commit()

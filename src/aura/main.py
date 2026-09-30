@@ -63,6 +63,11 @@ async def readiness():
     try:
         async with AsyncSessionFactory() as session:
             await session.execute(text("SELECT id FROM documents LIMIT 1"))
+            await session.execute(text("SELECT embedding <=> embedding FROM document_chunks LIMIT 1"))
+            await session.execute(text("SELECT embedding <=> embedding FROM tax_rule_chunks LIMIT 1"))
+            version = await session.scalar(text("SELECT version_num FROM alembic_version"))
+            if version != "20261001_03":
+                raise RuntimeError("Database migrations are not current")
         return {"status": "READY"}
     except Exception:  # noqa: BLE001 - optional dependency boundary
         return JSONResponse(status_code=503, content={"status": "NOT_READY"})

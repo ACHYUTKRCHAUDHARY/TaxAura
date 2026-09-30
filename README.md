@@ -1,10 +1,14 @@
 # TaxAura
 
-A tax-assistance website with FastAPI, PostgreSQL, self-hosted ChromaDB, Gemini, and a Next.js App Router + TypeScript frontend with TanStack Query. The calculator targets FY 2025-26 / AY 2026-27 resident salaried individuals below 60 with salary up to ₹50 lakh. It is an educational estimator, not a tax-filing service.
+Indian tax assistance with **Next.js + TypeScript + TanStack Query**, **FastAPI**, **PostgreSQL + pgvector**, and **Gemini**.
+
+Production: Vercel Next.js → Render FastAPI → PostgreSQL/pgvector, with server-side Gemini for generated answers. One database stores accounts, uploads, extracted text, chunks, and vectors. MiniLM embeddings run locally inside the backend; no embedding API account is needed.
+
+The calculator targets FY 2025–26 / AY 2026–27 resident salaried individuals below 60 with salary up to ₹50 lakh. It is an educational estimator, not a tax-filing service.
 
 ## Run on Windows with Docker Desktop
 
-Install Docker Desktop and enable its WSL2 backend. You do not need separate local PostgreSQL, Python, Tesseract, or Chroma installations.
+Enable Docker Desktop's WSL2 backend, then:
 
 ```powershell
 git clone https://github.com/ACHYUTKRCHAUDHARY/TaxAura.git
@@ -12,7 +16,7 @@ cd TaxAura
 Copy-Item .env.example .env
 ```
 
-Generate a JWT secret using PowerShell:
+Generate a JWT signing secret:
 
 ```powershell
 $bytes = New-Object byte[] 48
@@ -22,67 +26,48 @@ $rng.GetBytes($bytes)
 $rng.Dispose()
 ```
 
-Paste it into `.env` as `JWT_SECRET_KEY`. Put your [Google AI Studio key](https://aistudio.google.com/apikey) in `GEMINI_API_KEY`. Keep `.env` private. Leaving the Gemini key empty runs source-excerpt mode.
+Paste the result into `.env` as `JWT_SECRET_KEY`; add your Google AI Studio key as `GEMINI_API_KEY`. Leaving the Gemini key empty enables source excerpts instead of generated answers.
 
 ```powershell
 docker compose up --build
 ```
 
-Wait for the app to start, then open **http://localhost:8080/**. The first build downloads dependencies and the local MiniLM embedding model. In another terminal:
+Open **http://localhost:8080/**. The three services are Next.js, FastAPI, and PostgreSQL 17 with pgvector 0.8.2. The first backend build downloads and bakes the local MiniLM model into its image. Startup runs Alembic and Uvicorn with Render-compatible `PORT` handling.
 
 ```powershell
 docker compose exec app .venv/bin/python -m aura.scripts.seed_knowledge
 docker compose exec app .venv/bin/python -m aura.scripts.create_admin --email you@example.com --name "TaxAura Admin"
 ```
 
-Register or log in. You can upload documents, view extracted text, retry failed uploads, delete documents, compare tax regimes, and ask source-linked questions. Administrators can ingest reviewed tax guidance.
+Register/login, upload documents, preview extracted text, retry failures, delete documents, compare regimes, and ask source-linked questions. Administrators can add reviewed public tax guidance. The Next.js UI and API request/response contracts are preserved.
 
-## What runs where
+## Data and retrieval
 
-| Component | Location | Persistence |
-|---|---|---|
-| Next.js website | Frontend container, localhost:8080 | Stateless |
-| FastAPI | App container, localhost:10000 | PostgreSQL is the source of truth |
-| PostgreSQL | Private Compose network | `postgres_data` named volume |
-| ChromaDB | `chroma:8000`, host localhost:8000 | `chroma_data` mounted at `/data` |
-| MiniLM embeddings | App container | Model baked into image |
-| Gemini answers | Google API | Subject to your account's limits/terms |
+- PostgreSQL owns durable uploads and all vector data, in the `postgres_data` volume.
+- `document_chunks` retains its IDs, document/user links, content, and creation timestamp; it adds `chunk_index`, `embedding vector(384)`, and `embedding_model`.
+- `tax_rule_chunks` retains source names/URLs and content; it adds the same vector and model fields.
+- Embeddings use `sentence-transformers/all-MiniLM-L6-v2` through FastEmbed/ONNX on CPU, normalized to 384 dimensions. The version marker is `minilm-l6-v2-fastembed-v1`.
+- Rule retrieval uses cosine distance with an HNSW index. Private retrieval materializes the authenticated owner's completed chunks first, then performs exact cosine top-K to avoid global approximate-search filtering losing results. Both chunk and document ownership must match.
+- Embeddings are written in the same transaction as their source rows. Document deletion cascades to chunks and embeddings atomically.
+- If local model inference fails, extracted text is retained and PostgreSQL full-text retrieval remains available. Admin ingestion returns `semantic_indexed=false`. Database errors propagate as failures, rather than fabricated empty search results.
+- General questions and reviewed rule excerpts may be sent to Gemini. **“Include my documents” remains local excerpt mode**, preserving the existing privacy behavior. Private uploads are not sent to Gemini for embedding or answers in that mode.
 
-The Chroma client uses `HttpClient` with `CHROMA_HOST` and `CHROMA_PORT`. No hosted Chroma account or credentials are needed. Chroma stores derived vectors and ownership metadata; PostgreSQL stores users, private uploads, extracted text, and source chunks.
+Uploads support text PDFs and PNG/JPEG OCR. Convert scanned image-only PDFs to images first. Limits: 10 MB per upload in Docker, 4 MB through Vercel, 50 documents per user, PDFs up to 100 pages/200,000 extracted characters.
 
-Gemini is accessed server-side only. The default model is `gemini-3.8-flash`; override with `GEMINI_MODEL` if required by your account. Missing credentials, quota failures, or generation errors fall back to clearly labeled excerpts in the RAG chat. The controlled advisor endpoint has bounded execution and authenticated tool identity.
+## Upgrade an existing installation
 
-**Privacy:** general questions and retrieved tax-rule text are sent to Gemini. Do not enter sensitive information into general questions. “Include my documents” uses local excerpts and never sends those documents to Gemini. Gemini's free-tier data terms differ from paid usage; review them before using personal information.
-
-## Configuration
-
-`.env.example` includes the three database connection variables plus two necessary application secrets: the Gemini key and the JWT signing secret. Optional settings include `GEMINI_MODEL`, `AI_MODE=extractive`, and `AI_TIMEOUT_SECONDS` (default 45). Chroma requires no API key.
-
-For an existing PostgreSQL database, replace `DATABASE_URL`; the app uses that database. The bundled Postgres service still starts but is unused. To omit it, use the external-database Compose override documented in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
-
-## Operations
+Back up the database before upgrading. Revision `20261001_03` enables `vector`, adds nullable vector columns, backfills stable chunk positions, and creates indexes. Existing document bytes, text, IDs, and account data remain intact. **Run reindex once after migration** to populate vectors from existing PostgreSQL chunk text:
 
 ```powershell
-docker compose ps
-docker compose logs -f app
-docker compose down
-docker compose up -d
 docker compose exec app .venv/bin/python -m aura.scripts.reindex
+docker compose exec app .venv/bin/python -m aura.scripts.verify_vectors
 ```
 
-`docker compose down` keeps data. `docker compose down -v` deletes volumes and all their data. Backend `http://localhost:10000/health` checks the process; `http://localhost:10000/ready` checks PostgreSQL/schema availability. Chroma startup is probed before migrations and API startup.
-
-Uploads support text PDFs and PNG/JPEG OCR. Convert scanned image-only PDFs to images first. Limits: 10 MB per upload, 50 documents per user, PDFs up to 100 pages/200,000 extracted characters. Queue jobs survive app restarts; failed semantic indexing can be repaired with reindex. Existing filesystem uploads from older releases must be retained or re-uploaded.
-
-## Hosting
-
-The provided Compose stack is intended for your local computer or a VM you control. Render Free does not provide persistent disks for these database containers and does not deploy a Compose stack directly. The retained `render.yaml` deploys only the app and requires externally hosted PostgreSQL and ChromaDB.
-
-See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for persistent hosting, external database use, Gemini configuration, and troubleshooting. Local Docker has no cloud hosting bill; Gemini free quota is limited and not a promise of unlimited free usage.
+Reindex updates rows in batches and can safely be rerun. Legacy chunk order is assigned by `(created_at, id)` because the previous schema did not store positions; new uploads retain extraction order. Do not change the embedding model/dimensions without a matching schema migration and complete reindex.
 
 ## Frontend development
 
-Install Node.js 22 LTS. With the backend running on port 10000:
+Install Node.js 22. With the Docker backend running on port 10000:
 
 ```powershell
 cd frontend
@@ -91,23 +76,30 @@ npm ci
 npm run dev
 ```
 
-Open http://localhost:3000/. App Router handles pages; TanStack Query handles authenticated API queries, mutations, cache invalidation, and document polling. Authentication uses the existing short-lived bearer token in session storage. Signing out clears the query cache. FastAPI still enforces authentication, roles, and document ownership on every request.
+Open http://localhost:3000/. `API_ORIGIN` is server-side and defaults to `http://127.0.0.1:10000`. Never put database, JWT, or Gemini secrets in `NEXT_PUBLIC_*` variables.
 
-For Vercel, select `frontend` as the root directory, choose Next.js, set server-only `API_ORIGIN` to your Render backend URL, and leave `NEXT_PUBLIC_MAX_UPLOAD_MB=4`. See the complete [Vercel + Render instructions](docs/DEPLOYMENT.md#vercel-frontend--render-api).
+## Hosting and configuration
 
-## Tests
+Deploy `frontend/` to Vercel and the root Dockerfile to Render. Set Render's `DATABASE_URL` to a persistent PostgreSQL database with the vector extension available. Set Vercel's `API_ORIGIN` to the Render backend URL. See [deployment instructions](docs/DEPLOYMENT.md) for exact settings, migrations, extension privileges, and provider limits.
+
+Required production backend settings: `DATABASE_URL`, `JWT_SECRET_KEY`, `ENVIRONMENT=production`, and `ALLOWED_HOSTS`. Add `GEMINI_API_KEY` for generation. `GEMINI_MODEL` retains its existing default; `ALLOWED_ORIGINS` can be empty when the frontend proxy is used. Optional `EMBEDDING_CACHE_DIR` controls only the local model-weight cache, not vector storage.
+
+`/health` checks the process. `/ready` checks PostgreSQL, both vector columns/operators, and the expected Alembic revision. It never calls Gemini. To inspect the stack:
+
+```powershell
+docker compose ps
+docker compose logs -f app
+docker compose down
+```
+
+`docker compose down` retains data; `docker compose down -v` destroys volumes. Backups are your responsibility.
+
+## Verification
 
 ```powershell
 uv sync --frozen --dev
 uv run ruff check src tests
 uv run pytest -q
-```
-
-The PostgreSQL integration test requires a disposable migrated database in `TEST_DATABASE_URL`. CI runs native PostgreSQL tests and builds/starts the actual Compose stack, seeds knowledge, and checks a real Chroma semantic query. Gemini tests mock the API and cover configuration, generation, fallback, and private-document isolation; a live Gemini request requires your key.
-
-Frontend build and browser checks:
-
-```powershell
 cd frontend
 npm ci
 npm run build
@@ -116,4 +108,6 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-Browser tests cover complete user flows against a controlled API fixture. Compose CI also runs real browser journeys through Next.js, FastAPI, PostgreSQL, and Chroma: registration, PDF extraction, cross-user access denial, tax comparison, public and private RAG, sign-in persistence, deletion, and admin ingestion. Run `npm run test:live` only against a disposable seeded local stack; it creates test accounts and content. Set `E2E_ADMIN_EMAIL` and `E2E_ADMIN_PASSWORD` to include the admin journey. No live Gemini call runs in CI; generation remains covered by provider-mocked backend tests.
+Database integration tests need a **disposable, migrated** `TEST_DATABASE_URL`. Without it they are explicitly skipped. CI tests fresh migrations, existing-data upgrades, downgrade/re-upgrade, embedding persistence, cosine ranking, document isolation, atomic deletion, backfill, keyword fallback, database failures, and mocked Gemini failures.
+
+Compose CI builds the real three-service stack, uses real MiniLM embeddings, seeds the database, verifies stored vectors, and runs browser journeys including real PDF ingestion, private retrieval, cross-user denial, tax comparison, and admin ingestion. `npm run test:live` targets a disposable seeded stack on port 8080; it creates test accounts/content. Set `E2E_ADMIN_EMAIL` and `E2E_ADMIN_PASSWORD` to include the admin journey. Live Gemini responses require your own API key and are not claimed by mocked tests.

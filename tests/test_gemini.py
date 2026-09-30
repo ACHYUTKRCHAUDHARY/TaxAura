@@ -37,7 +37,7 @@ async def test_rag_generates_from_retrieved_rules(monkeypatch):
         source_url="https://example.com",
         content="Verified rebate rule",
     )
-    monkeypatch.setattr(rag_service, "_retrieve_rules", AsyncMock(return_value=[chunk]))
+    monkeypatch.setattr(rag_service, "retrieve_rules", AsyncMock(return_value=[chunk]))
     model = SimpleNamespace(ainvoke=AsyncMock(return_value=SimpleNamespace(content="Cited answer")))
     monkeypatch.setattr(rag_service, "build_chat_model", lambda: model)
     result = await rag_service.answer_with_rag("What rebate applies?", None, None)
@@ -52,7 +52,7 @@ async def test_quota_failure_falls_back_to_excerpts(monkeypatch):
     chunk = SimpleNamespace(
         source_name="Official source", source_url=None, content="Verified rebate rule"
     )
-    monkeypatch.setattr(rag_service, "_retrieve_rules", AsyncMock(return_value=[chunk]))
+    monkeypatch.setattr(rag_service, "retrieve_rules", AsyncMock(return_value=[chunk]))
     model = SimpleNamespace(ainvoke=AsyncMock(side_effect=RuntimeError("quota exhausted")))
     monkeypatch.setattr(rag_service, "build_chat_model", lambda: model)
     result = await rag_service.answer_with_rag("What rebate applies?", None, None)
@@ -65,10 +65,10 @@ async def test_private_document_mode_never_calls_gemini(monkeypatch):
     from uuid import uuid4
 
     monkeypatch.setattr(rag_service.settings, "ai_mode", "gemini")
-    monkeypatch.setattr(rag_service, "_retrieve_rules", AsyncMock(return_value=[]))
+    monkeypatch.setattr(rag_service, "retrieve_rules", AsyncMock(return_value=[]))
     monkeypatch.setattr(
         rag_service,
-        "_retrieve_documents",
+        "retrieve_documents",
         AsyncMock(return_value=[(SimpleNamespace(content="Private salary"), "salary.pdf")]),
     )
     model_factory = AsyncMock()

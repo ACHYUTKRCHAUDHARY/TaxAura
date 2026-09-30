@@ -6,9 +6,9 @@ ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy PYTHONUNBUFFERED=1
 COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
 RUN uv sync --frozen --no-dev
-# Warm the default Chroma embedding model once; do not redownload on each request.
-ENV HOME=/home/app
-RUN mkdir -p /home/app && uv run --no-sync python -c "from chromadb.utils.embedding_functions import DefaultEmbeddingFunction; DefaultEmbeddingFunction()(['TaxAura model warmup'])"
+# Bake local MiniLM weights into the image; no model download during production requests.
+ENV HOME=/home/app EMBEDDING_CACHE_DIR=/home/app/.cache/fastembed
+RUN mkdir -p /home/app && uv run --no-sync python -m aura.services.embeddings
 COPY alembic.ini ./
 COPY scripts ./scripts
 RUN useradd --create-home --uid 10001 app && chown -R app:app /app /home/app

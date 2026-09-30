@@ -14,10 +14,7 @@ class Settings(BaseSettings):
     worker_poll_seconds: float = Field(default=3, ge=0.1)
     ai_mode: Literal["extractive", "gemini"] = "gemini"
     ai_timeout_seconds: float = Field(default=45, ge=1, le=300)
-    chroma_mode: Literal["http", "disabled"] = "http"
-    chroma_host: str = "chroma"
-    chroma_port: int = Field(default=8000, ge=1, le=65535)
-    chroma_ssl: bool = False
+    embedding_cache_dir: Path = Path("storage/embeddings")
     upload_directory: Path = Path("storage/uploads")
     gemini_api_key: SecretStr | None = None
     gemini_model: str = "gemini-3.8-flash"

@@ -62,9 +62,15 @@ async def process_document(document_id: UUID | None = None) -> bool:
                     delete(DocumentChunk).where(DocumentChunk.document_id == document.id)
                 )
                 records = [
-                    DocumentChunk(document_id=document.id, user_id=document.user_id, content=chunk)
-                    for chunk in chunks
+                    DocumentChunk(
+                        document_id=document.id,
+                        user_id=document.user_id,
+                        content=chunk,
+                        chunk_index=index,
+                    )
+                    for index, chunk in enumerate(chunks)
                 ]
+                await index_chunks(records)
                 session.add_all(records)
                 document.extracted_text = extracted
                 document.processing_status = DocumentStatus.COMPLETED
@@ -81,8 +87,6 @@ async def process_document(document_id: UUID | None = None) -> bool:
             )
             event = "document.failed"
         payload = {"document_id": str(document.id), "user_id": str(document.user_id)}
-        if event == "document.completed":
-            await index_chunks(records, "documents")
         await session.commit()
     try:
         await publish_workflow_event(event, payload)

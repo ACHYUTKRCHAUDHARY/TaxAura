@@ -2,6 +2,7 @@
 
 import os
 from io import BytesIO
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import httpx
@@ -14,7 +15,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from aura.db.models import Document, DocumentChunk, User
 from aura.db.session import get_session
 from aura.main import app
-from aura.services import document_processor, rag_service
+from aura.services import document_processor, embeddings, vector_store
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("TEST_DATABASE_URL"), reason="No test database configured"
@@ -53,6 +54,11 @@ async def test_complete_user_flow_and_isolation(monkeypatch):
 
     app.dependency_overrides[get_session] = session_override
     monkeypatch.setattr(document_processor, "AsyncSessionFactory", factory)
+    monkeypatch.setattr(
+        embeddings,
+        "embed",
+        AsyncMock(side_effect=lambda texts: [[1.0] + [0.0] * 383 for _ in texts]),
+    )
     marker = uuid4().hex
     user_ids = []
     try:
@@ -126,19 +132,20 @@ async def test_complete_user_flow_and_isolation(monkeypatch):
             assert response.status_code == 200, response.text
             assert "Private salary" in response.json()["text"]
             async with factory() as session:
-                chunk_id = await session.scalar(
-                    select(DocumentChunk.id).where(DocumentChunk.document_id == UUID(doc_id))
+                chunk = await session.scalar(
+                    select(DocumentChunk).where(DocumentChunk.document_id == UUID(doc_id))
                 )
-
-                # Simulate Chroma returning a hostile/stale ID owned by another user.
-                async def hostile_ids(*args):
-                    return [chunk_id]
-
-                monkeypatch.setattr(rag_service, "semantic_ids", hostile_ids)
+                assert chunk.chunk_index == 0
+                assert len(chunk.embedding) == 384
+                assert chunk.embedding_model == embeddings.MODEL_ID
                 assert (
-                    await rag_service._retrieve_documents("salary", UUID(user_ids[1]), session)
+                    await vector_store.retrieve_documents("unrelated", UUID(user_ids[1]), session)
                     == []
                 )
+                hits = await vector_store.retrieve_documents(
+                    "unrelated", UUID(user_ids[0]), session
+                )
+                assert hits[0][0].id == chunk.id
             result = await client.post(
                 "/api/v1/tax/compare", headers=owner, json={"annual_salary": 1300000}
             )
@@ -170,6 +177,30 @@ async def test_complete_user_flow_and_isolation(monkeypatch):
             assert retried.json()["processing_status"] == "QUEUED"
             assert (
                 await client.delete(f"/api/v1/documents/{bad_id}", headers=owner)
+            ).status_code == 204
+            # Inference failure preserves extraction and owner-filtered keyword search.
+            monkeypatch.setattr(
+                embeddings, "embed", AsyncMock(side_effect=RuntimeError("model offline"))
+            )
+            fallback = await client.post(
+                "/api/v1/documents/upload",
+                headers=owner,
+                files={"file": ("fallback.pdf", text_pdf(), "application/pdf")},
+            )
+            fallback_id = UUID(fallback.json()["document_id"])
+            assert await document_processor.process_document(fallback_id)
+            async with factory() as session:
+                chunk = await session.scalar(
+                    select(DocumentChunk).where(DocumentChunk.document_id == fallback_id)
+                )
+                assert chunk.embedding is None
+                assert await vector_store.retrieve_documents("salary", UUID(user_ids[0]), session)
+                assert (
+                    await vector_store.retrieve_documents("salary", UUID(user_ids[1]), session)
+                    == []
+                )
+            assert (
+                await client.delete(f"/api/v1/documents/{fallback_id}", headers=owner)
             ).status_code == 204
     finally:
         app.dependency_overrides.clear()

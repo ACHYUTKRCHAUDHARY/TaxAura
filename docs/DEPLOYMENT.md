@@ -1,121 +1,152 @@
-# Self-hosted TaxAura with Gemini
+# Deploy TaxAura: Vercel + Render + PostgreSQL/pgvector
 
-## Local Docker setup
+## Architecture
 
-1. Install Docker Desktop on Windows with the WSL2 backend.
-2. Clone the repository and copy `.env.example` to `.env`.
-3. Set a random `JWT_SECRET_KEY` using the README's PowerShell command.
-4. Add your server-side `GEMINI_API_KEY` from Google AI Studio. Leave it empty to use source excerpts without generation.
-5. Run `docker compose up --build`.
-6. Open http://localhost:8080/.
-7. Load knowledge and create an admin:
+| Component | Host | Configuration |
+|---|---|---|
+| Next.js / TypeScript / TanStack Query | Vercel | Root directory `frontend`, server-only `API_ORIGIN` |
+| FastAPI + local MiniLM embeddings | Render Docker web service | Root Dockerfile, server-side secrets |
+| Relational data and vector embeddings | Persistent PostgreSQL | `DATABASE_URL`, pgvector extension |
+| Generated answers | Gemini API | Backend-only `GEMINI_API_KEY` |
 
-```powershell
-docker compose exec app .venv/bin/python -m aura.scripts.seed_knowledge
-docker compose exec app .venv/bin/python -m aura.scripts.create_admin --email you@example.com --name "TaxAura Admin"
+The backend is stateless except for temporary upload files and baked model weights. Persistent uploads, chunks, and embeddings all live in PostgreSQL. There is no separate vector service.
+
+## 1. Prepare PostgreSQL
+
+Use PostgreSQL with pgvector **0.8.2 or newer** (the tested Compose version). Your provider must support installation of the `vector` extension. For example, a compatible managed PostgreSQL instance or your own pgvector-enabled PostgreSQL server can be used. This repository does not provision a database account or guarantee a permanent free tier.
+
+A database administrator may need to run this once:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+SELECT extversion FROM pg_extension WHERE extname = 'vector';
 ```
 
-The app waits for PostgreSQL health and probes Chroma's `/api/v2/heartbeat`, applies migrations, then starts one Uvicorn worker. App and Chroma ports bind only to localhost. PostgreSQL has no published host port. The bundled database password is for local development only.
+Alembic also runs the extension command. If your migration user lacks extension privileges, pre-enable it with an administrator. The migration user needs table/index DDL privileges; do not give database credentials to the frontend.
 
-## Persistent data
-
-- PostgreSQL 17: `postgres_data` at `/var/lib/postgresql/data`.
-- Chroma 1.5.9: `chroma_data` at `/data`.
-- Upload bytes and extracted text live in PostgreSQL. Vector records live in Chroma.
-- Embeddings use all-MiniLM-L6-v2 locally; no Gemini embedding API calls are needed.
-
-Named volumes survive container restarts, image rebuilds, and `docker compose down`. They do not survive `docker compose down -v`, deliberate volume removal, or losing the host disk. Back up your data before host/image upgrades. Use a new collection and reindex if you change embedding models.
-
-## Use an existing PostgreSQL database
-
-Set `DATABASE_URL` in `.env` to its direct asyncpg-compatible connection string, for example:
+Use an async SQLAlchemy connection string:
 
 ```env
-DATABASE_URL=postgresql+asyncpg://USER:PASSWORD@HOST:5432/DATABASE?ssl=verify-full
+DATABASE_URL=postgresql+asyncpg://USER:PASSWORD@HOST:5432/taxaura
 ```
 
-Percent-encode special characters in credentials. Asyncpg accepts `ssl`, not libpq-only `sslmode` or `channel_binding` query parameters. Use your provider's TLS instructions.
+`postgres://` and `postgresql://` prefixes are normalized to asyncpg. Percent-encode special characters in credentials. For remote TLS use the provider's certificate instructions; asyncpg supports `?ssl=verify-full`, not libpq-only `sslmode` or `channel_binding` URL parameters. Use a direct database connection for migrations.
 
-By default the unused local Postgres service still starts. With Docker Compose 2.24.4 or later, create `compose.external-db.yml`:
+## 2. Deploy FastAPI on Render
+
+Import the repository as a Blueprint using `render.yaml`, or create a Docker web service with the root `Dockerfile`. Keep the repository root as the build context. Set:
+
+```env
+DATABASE_URL=postgresql+asyncpg://USER:PASSWORD@HOST:5432/taxaura
+GEMINI_API_KEY=your-server-side-key
+GEMINI_MODEL=gemini-3.8-flash
+JWT_SECRET_KEY=your-random-secret-at-least-32-characters
+ENVIRONMENT=production
+ALLOWED_HOSTS=your-api.onrender.com,localhost,127.0.0.1
+ALLOWED_ORIGINS=
+DOCUMENT_WORKER_ENABLED=true
+```
+
+The Blueprint generates a JWT secret for new services. Preserve the existing signing key when upgrading an existing service unless intentionally invalidating sessions. Use a Gemini model available to your account. Missing credentials or Gemini errors produce labeled excerpts in RAG; optional agent requests may return 503.
+
+The image installs dependencies with the lockfile, installs OCR tools, and downloads the MiniLM weights during build. Runtime startup runs:
+
+```sh
+uv run --no-sync alembic upgrade head
+uv run --no-sync uvicorn aura.main:app --host 0.0.0.0 --port "$PORT" --workers 1
+```
+
+`scripts/start.sh` defaults to port 10000 locally and respects Render's injected `PORT`. Health-check path: `/ready`. Check:
+
+```text
+https://your-api.onrender.com/health   -> {"status":"UP"}
+https://your-api.onrender.com/ready    -> {"status":"READY"}
+```
+
+Deploy one API instance initially; the existing worker uses PostgreSQL row locks. Run schema changes once during a controlled deployment if you later scale instances. Ensure the selected Render plan has enough memory for FastAPI, ONNX inference, and OCR; low-memory tiers may require upgrading. No live Render capacity test is implied by Docker CI.
+
+## 3. Migrate and load knowledge
+
+Back up an existing database first. Revision `20261001_03` adds `vector(384)` columns and HNSW cosine indexes to both chunk tables, plus unique ordered document chunk positions. It retains existing text and document bytes; it does not call an embedding provider from inside a migration.
+
+After deploying the revision, use the backend shell:
+
+```sh
+.venv/bin/python -m aura.scripts.reindex
+.venv/bin/python -m aura.scripts.seed_knowledge
+.venv/bin/python -m aura.scripts.verify_vectors
+.venv/bin/python -m aura.scripts.create_admin --email you@example.com --name "TaxAura Admin"
+```
+
+Reindex is mandatory for existing text chunks and updates in batches of 32. Until it finishes, unembedded rows have keyword-search fallback. Rerunning it does not create duplicate chunks. `verify_vectors` requires seeded/ingested rules and checks stored embeddings plus database retrieval.
+
+If your Render plan does not offer a shell, run the same modules from a trusted local Python environment configured with the production database connection and server-side settings. Do not expose an unauthenticated migration/admin endpoint. To create an administrator, the command prompts for a password; never commit it.
+
+The migration assigns old document chunk positions by creation time and ID because old rows had no explicit ordering. New ingestion stores the true chunk index. Downgrading removes vector columns/indexes and positions but retains text and uploads; re-upgrading then requires reindex again. HNSW index creation is transactional and may lock large existing tables; schedule maintenance for large datasets.
+
+## 4. Deploy Next.js on Vercel
+
+Import the repository and configure:
+
+| Setting | Value |
+|---|---|
+| Root Directory | `frontend` |
+| Framework | Next.js |
+| Node.js | 22.x |
+| Install Command | `npm ci` |
+| Build Command | `npm run build` |
+| Output Directory | Framework default |
+
+Environment variables for Production and Preview:
+
+```env
+API_ORIGIN=https://your-api.onrender.com
+NEXT_PUBLIC_MAX_UPLOAD_MB=4
+```
+
+Use only the origin, without `/api/v1`. `API_ORIGIN` stays server-side. Never add Gemini keys, JWT secrets, or database URLs to `NEXT_PUBLIC_*` variables.
+
+The browser calls same-origin `/api/v1/*`; the Next.js server forwards supported paths and bearer authorization to Render. `ALLOWED_ORIGINS` can stay empty for this server-side proxy flow. Backend `ALLOWED_HOSTS` must contain the actual API hostname. Existing frontend routes, authentication, and API response shapes are unchanged.
+
+Vercel's request-body limit is 4.5 MB, so its frontend upload cap stays at 4 MB for multipart overhead. Docker builds retain 10 MB. The upload limit is a build-time frontend setting. The proxy timeout is 55 seconds; Gemini generation has a separate 45-second backend timeout.
+
+## Local Windows development
+
+Use the README's Docker Desktop instructions. Only three services run: `frontend`, `app`, and `postgres` (image `pgvector/pgvector:0.8.2-pg17`). Next.js binds localhost:8080, the API localhost:10000, and PostgreSQL has no published host port. `postgres_data` keeps relational data and vectors across restarts.
+
+To use an existing database, set `DATABASE_URL` in root `.env`. To avoid starting the unused bundled database, with Compose 2.24.4+ create `compose.external-db.yml`:
 
 ```yaml
 services:
   postgres:
     profiles: [bundled-database]
   app:
-    depends_on: !override
-      chroma:
-        condition: service_started
+    depends_on: !override {}
 ```
-
-Then run:
 
 ```powershell
 docker compose -f docker-compose.yml -f compose.external-db.yml up --build
 ```
 
-Inside containers, `localhost` means that container. To reach PostgreSQL installed directly on your Windows host, use `host.docker.internal` as the database hostname.
-
-## Gemini configuration
-
-The app uses `langchain-google-genai`, which calls Google's Gemini API. `GEMINI_API_KEY` stays on the backend. `GEMINI_MODEL` defaults to `gemini-3.8-flash` and can be overridden with a model available to your project. Generation requests have a 45-second total timeout and no automatic model retries. RAG falls back to excerpts on missing credentials, quota exhaustion, unavailable models, or empty responses. The agent endpoint can return 503 if its tool-driven run fails.
-
-The `.env` template also contains `JWT_SECRET_KEY` because removing it would break authenticated production startup. Database connection settings alone cannot configure the whole app.
-
-General chat sends the question and selected reviewed tax rules to Gemini. Private document queries return local excerpts; raw uploads, filenames, and extracted personal document content are not sent by that flow. Do not type sensitive details into a general question. The advisor's status tool returns numbered statuses, not filenames. Add only public, reviewed guidance through admin knowledge ingestion.
-
-Google's free tier has rate/model limits, and its pricing page says free-tier content may be used to improve products. Paid usage has different terms. Confirm eligibility and limits in your own project; no code change can guarantee unlimited free API usage.
-
-## Free hosting choices
-
-**Local machine:** this is the supplied, persistent setup without a cloud hosting bill. It is available while Docker and your computer are running. Gemini still needs internet and remains subject to quota. The local embedding model downloads during the first image build.
-
-**Your own VM:** run the same Compose stack on a VM that has sufficient memory and persistent storage. Free VM offers depend on account eligibility, region, capacity, and provider terms; this project does not provision or promise one. Keep the default localhost bindings and access the app through an SSH tunnel, or deliberately configure TLS/reverse proxy, firewall, strong database credentials, exact allowed hosts, backups, and abuse controls for a public deployment. Never expose the unauthenticated Chroma port publicly.
-
-**Render Free:** free web services cannot attach persistent disks. Their filesystem is ephemeral; local Chroma/PostgreSQL data would be lost across replacement/redeployment. Render also does not launch `docker-compose.yml` as one service. The app-only `render.yaml` requires external persistent PostgreSQL and Chroma services, and a reachable secured Chroma endpoint. Its default TLS setting must match the external endpoint/port. A private localhost Chroma instance on your laptop is not reachable from Render. Prefer the local Compose stack for the requested free self-hosted setup.
-
-## Vercel frontend + Render API
-
-The website is now a separate Next.js application in `frontend/`. FastAPI serves APIs only; it no longer serves source files or HTML. Old `/app/*.html` website links redirect to the new pages on the frontend.
-
-1. Deploy the backend using the root `Dockerfile` and `render.yaml`. Supply persistent PostgreSQL and Chroma connections, your Gemini key, and a random JWT secret. Verify `https://YOUR-API.onrender.com/ready` returns `READY` before deploying the frontend.
-2. In Vercel, import this GitHub repository. Set **Root Directory** to **frontend** and **Framework Preset** to **Next.js**. Use Node.js **22.x**, install command `npm ci`, and build command `npm run build`. Keep the framework's default output setting; do not set `out` or `.next/standalone` as the output directory.
-3. Set these environment variables for Production and Preview:
-
-   ```env
-   API_ORIGIN=https://YOUR-API.onrender.com
-   NEXT_PUBLIC_MAX_UPLOAD_MB=4
-   ```
-
-   `API_ORIGIN` is only the origin: no trailing `/api/v1`. Do not add `NEXT_PUBLIC_` to it. Never put `GEMINI_API_KEY`, the JWT signing secret, database credentials, or Chroma credentials in frontend variables.
-4. Deploy. Visit the Vercel URL, register, compare tax estimates, and upload a small PDF. The browser calls same-origin `/api/v1/*`; the Next.js server forwards only supported API routes to FastAPI with the bearer token. CORS can remain empty because the proxy makes the cross-host request server-side. Render's `ALLOWED_HOSTS` must include the actual API hostname.
-5. Seed the backend knowledge and create an administrator using its shell or an authenticated environment connected to the same database. The commands are `python -m aura.scripts.seed_knowledge` and `python -m aura.scripts.create_admin --email you@example.com --name "TaxAura Admin"` in the installed backend environment. For Docker use `.venv/bin/python`.
-
-Vercel Functions impose a 4.5 MB request-body limit, so Vercel uploads are capped at **4 MB** to leave room for multipart overhead. Self-hosted Docker builds default to **10 MB**. `NEXT_PUBLIC_MAX_UPLOAD_MB` is a build-time setting; rebuild after changing it. The backend still independently enforces its own file size limit.
-
-The proxy permits up to 55 seconds for API responses; general Gemini generation has its own 45-second backend timeout. A sleeping Render Free service can cause the first request to fail; wait for `/ready` and retry. Persistent Chroma requires a separate persistent service or VM; Vercel does not host Chroma. A public, unauthenticated Chroma endpoint is not a safe deployment.
-
-For local production: `docker compose up --build` runs Next.js on port 8080, FastAPI on port 10000, PostgreSQL, and Chroma. For frontend development against that stack, use `frontend/.env.local` with `API_ORIGIN=http://127.0.0.1:10000`, then `npm run dev` in `frontend/`.
-
-## Verification after startup
+For native Windows Python development: install Python 3.14, uv, PostgreSQL with pgvector, and Tesseract for OCR. Set `.env` to your local database, set `TESSERACT_CMD` if required, then:
 
 ```powershell
-Invoke-RestMethod http://localhost:10000/health
-Invoke-RestMethod http://localhost:10000/ready
-docker compose ps
+uv sync --frozen --dev
+uv run alembic upgrade head
+uv run python -m aura.scripts.seed_knowledge
+uv run uvicorn aura.main:app --host 127.0.0.1 --port 10000
 ```
 
-Register, sign in, upload a text PDF, wait for completion, preview its text, compare tax regimes, and ask a seeded-rule question. Check source labels. Try “Include my documents”; it should return excerpts rather than generated content. Delete the upload, restart containers without deleting volumes, and confirm remaining data persists.
+In another terminal, run `npm ci` and `npm run dev` inside `frontend/`. Its `.env.local` should set `API_ORIGIN=http://127.0.0.1:10000`.
 
-## Troubleshooting
+## Operations and limits
 
-- App exits immediately: replace the JWT placeholder; inspect `docker compose logs app`.
-- Chroma startup timeout: verify `CHROMA_HOST=chroma`, `CHROMA_PORT=8000`, and `docker compose logs chroma`.
-- Source excerpts instead of generation: check Gemini key/model/quota and app logs. Never paste keys into issues.
-- No matching source: run the seed command or ingest reviewed public guidance as admin.
-- Semantic search unavailable: verify Chroma persistence/connectivity and run `docker compose exec app .venv/bin/python -m aura.scripts.reindex`.
-- First image build cannot download MiniLM: restore internet access to the model download host and rebuild. No model downloads use Gemini quota.
-- Existing release upgrade: back up PostgreSQL. Older filesystem uploads must remain available or be re-uploaded; old vector columns removed by the previous migration require reindexing into the new self-hosted Chroma service.
-- Failed document processing: text PDFs and clear images are supported; scanned PDFs must be converted to images. Account/file/page limits are documented in the README.
+- A persistent PostgreSQL service is still required. Render Free web-service filesystems are ephemeral, and free Render PostgreSQL databases expire; do not store production data in container-local files or rely on a temporary database.
+- Back up PostgreSQL, including uploads and vectors. Never use `docker compose down -v` on data you need.
+- Default embedding cache: `storage/embeddings`; Docker overrides `EMBEDDING_CACHE_DIR` to `/home/app/.cache/fastembed`. It contains model weights only. Do not delete baked weights from a running container.
+- Model inference failure preserves text and uses SQL keyword fallback; rerun reindex after recovery. Database failure returns unavailable responses and `/ready` becomes 503. Inspect server logs without publishing secrets.
+- Private retrieval checks the authenticated user against both chunk and parent document ownership before cosine ranking. Only completed documents participate. Deletion cascades to vector rows in the same transaction.
+- Private-document questions still return local excerpts and are not sent to Gemini. General questions may be sent with reviewed public tax-rule text; avoid personal details in general questions.
+- Old filesystem-backed uploads from early releases must be retained or re-uploaded; already extracted chunk text can still be reindexed from PostgreSQL.
 
-References: [Chroma Docker](https://docs.trychroma.com/deployment/docker), [Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing), [Gemini API keys](https://ai.google.dev/gemini-api/docs/api-key), [Render free limits](https://render.com/docs/free), [Vercel function limits](https://vercel.com/docs/functions/limitations), [Next.js deployment](https://nextjs.org/docs/app/getting-started/deploying).
+References: [pgvector](https://github.com/pgvector/pgvector), [FastEmbed models](https://qdrant.github.io/fastembed/examples/Supported_Models/), [Render free limits](https://render.com/docs/free), [Vercel function limits](https://vercel.com/docs/functions/limitations).

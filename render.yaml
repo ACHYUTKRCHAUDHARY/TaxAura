@@ -1,5 +1,4 @@
-# App-only option. Chroma and PostgreSQL must already exist elsewhere.
-# Render Free cannot provide persistent volumes for this Compose stack.
+# FastAPI only. DATABASE_URL must point to PostgreSQL with the vector extension.
 services:
   - type: web
     name: taxaura
@@ -17,14 +16,6 @@ services:
         value: "*.onrender.com,localhost,127.0.0.1"
       - key: ALLOWED_ORIGINS
         value: ""
-      - key: CHROMA_MODE
-        value: http
-      - key: CHROMA_HOST
-        sync: false
-      - key: CHROMA_PORT
-        value: "8000"
-      - key: CHROMA_SSL
-        value: "true"
       - key: GEMINI_API_KEY
         sync: false
       - key: GEMINI_MODEL
