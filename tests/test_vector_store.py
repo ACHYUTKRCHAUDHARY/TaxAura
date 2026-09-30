@@ -8,7 +8,7 @@ from aura.services import vector_store
 
 @pytest.mark.asyncio
 async def test_document_query_requires_identity(monkeypatch):
-    monkeypatch.setattr(vector_store.settings, "chroma_mode", "local")
+    monkeypatch.setattr(vector_store.settings, "chroma_mode", "http")
     target = MagicMock()
     monkeypatch.setattr(vector_store, "collection", target)
     assert await vector_store.semantic_ids("salary", "documents") == []
@@ -18,7 +18,7 @@ async def test_document_query_requires_identity(monkeypatch):
 @pytest.mark.asyncio
 async def test_document_query_is_filtered_by_owner(monkeypatch):
     owner, chunk = uuid4(), uuid4()
-    monkeypatch.setattr(vector_store.settings, "chroma_mode", "local")
+    monkeypatch.setattr(vector_store.settings, "chroma_mode", "http")
     target = MagicMock()
     target.query.return_value = {"ids": [[str(chunk)]]}
     monkeypatch.setattr(vector_store, "collection", lambda _: target)

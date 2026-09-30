@@ -1,90 +1,90 @@
 # TaxAura
 
-An Indian tax-assistance web app built with FastAPI, PostgreSQL, **ChromaDB**, and HTML/CSS/vanilla JavaScript. The app serves its frontend at `/app/` and API at `/api/v1`.
+A tax-assistance website with FastAPI, PostgreSQL, self-hosted ChromaDB, Gemini, and HTML/CSS/JavaScript. The calculator targets FY 2025-26 / AY 2026-27 resident salaried individuals below 60 with salary up to ₹50 lakh. It is an educational estimator, not a tax-filing service.
 
-TaxAura is an educational estimator for **FY 2025-26 / AY 2026-27**, not a filing service or professional tax advice.
+## Run on Windows with Docker Desktop
 
-## Features
-
-- Registration/login with Argon2 password hashing, expiring JWTs, and admin authorization
-- Private PDF/JPEG/PNG uploads, signature/size checks, account quotas, and durable PostgreSQL storage
-- Restart-safe database processing queue, image OCR, extracted-text preview, status polling, retry, and deletion
-- ChromaDB semantic search plus PostgreSQL full-text fallback; private retrieval requires ownership checks
-- Source-linked tax Q&A with optional personal-document context
-- Explicit source-excerpt mode without an LLM; optional Ollama RAG and identity-bound LangGraph advisor
-- Old/new regime comparison including section 87A marginal relief near the new-regime rebate threshold
-- Admin knowledge ingestion, starter-source seed command, reindex command, optional signed n8n notifications
-- Render Blueprint, Docker build, migrations, readiness checks, and CI with PostgreSQL integration tests
-
-## Run locally on Windows
-
-Install Python 3.14, [uv](https://docs.astral.sh/uv/), and PostgreSQL. Create a database named `taxaura`. No pgvector extension or Docker Desktop is needed.
+Install Docker Desktop and enable its WSL2 backend. You do not need separate local PostgreSQL, Python, Tesseract, or Chroma installations.
 
 ```powershell
 git clone https://github.com/ACHYUTKRCHAUDHARY/TaxAura.git
 cd TaxAura
-uv sync --frozen --dev
 Copy-Item .env.example .env
-uv run python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
-Put the generated value in `.env` as `JWT_SECRET_KEY`, and update `DATABASE_URL` with your PostgreSQL credentials. Then:
+Generate a JWT secret using PowerShell:
 
 ```powershell
-uv run alembic upgrade head
-uv run python -m aura.scripts.seed_knowledge
-uv run python -m aura.scripts.create_admin --email admin@example.com --name "TaxAura Admin"
-uv run uvicorn aura.main:app --reload
+$bytes = New-Object byte[] 48
+$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+$rng.GetBytes($bytes)
+[Convert]::ToBase64String($bytes)
+$rng.Dispose()
 ```
 
-Open http://127.0.0.1:8000/app/. Local Chroma persists in `storage/chroma`; its first use downloads the all-MiniLM-L6-v2 embedding model. If download/indexing fails, keyword search still works; run `uv run python -m aura.scripts.reindex` after fixing connectivity.
+Paste it into `.env` as `JWT_SECRET_KEY`. Put your [Google AI Studio key](https://aistudio.google.com/apikey) in `GEMINI_API_KEY`. Keep `.env` private. Leaving the Gemini key empty runs source-excerpt mode.
 
-For JPEG/PNG OCR, install Tesseract on Windows and set `TESSERACT_CMD=C:\Program Files\Tesseract-OCR\tesseract.exe`. Text PDFs do not require Tesseract. Convert image-only PDFs to PNG/JPEG before uploading.
+```powershell
+docker compose up --build
+```
 
-For generated answers, install/start Ollama, run `ollama pull qwen2.5:3b`, and set `AI_MODE=ollama`. Otherwise responses are clearly labeled source excerpts.
+Wait for the app to start, then open **http://localhost:8080/app/**. The first build downloads dependencies and the local MiniLM embedding model. In another terminal:
 
-## Deploy
+```powershell
+docker compose exec app .venv/bin/python -m aura.scripts.seed_knowledge
+docker compose exec app .venv/bin/python -m aura.scripts.create_admin --email you@example.com --name "TaxAura Admin"
+```
 
-Follow **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** for the Render + PostgreSQL + Chroma Cloud setup, required secrets, admin initialization, AI configuration, smoke checks, migration cautions, and service limits. No separate Vercel deployment is needed.
+Register or log in. You can upload documents, view extracted text, retry failed uploads, delete documents, compare tax regimes, and ask source-linked questions. Administrators can ingest reviewed tax guidance.
 
-## Architecture
+## What runs where
 
-PostgreSQL is authoritative for users, upload bytes, extracted text, and chunks. ChromaDB stores derived vectors and ownership metadata. Semantic hits are checked against database ownership before use. The default embedding function runs locally; raw upload text is not stored in Chroma. Enabling Ollama sends selected retrieved context to the configured model host.
-
-The queue uses `FOR UPDATE SKIP LOCKED` and commits extraction atomically. Restarted jobs remain queued. Indexing failures degrade to keyword retrieval; reindex repairs Chroma later. `/health` checks the process, `/ready` checks database/schema access.
-
-## API summary
-
-| Method | Endpoint | Purpose |
+| Component | Location | Persistence |
 |---|---|---|
-| POST | `/api/v1/auth/register` | Register |
-| POST | `/api/v1/auth/login` | Login; email in `username` form field |
-| GET | `/api/v1/users/me` | Profile |
-| POST | `/api/v1/documents/upload` | Upload |
-| GET | `/api/v1/documents` | Own documents |
-| GET | `/api/v1/documents/{id}/text` | Extracted text |
-| POST | `/api/v1/documents/{id}/retry` | Retry failed extraction |
-| DELETE | `/api/v1/documents/{id}` | Delete document/chunks/vectors |
-| POST | `/api/v1/tax/compare` | Supported tax comparison |
-| POST | `/api/v1/knowledge/rules` | Admin ingestion |
-| POST | `/api/v1/knowledge/ask` | Cited Q&A; optional `include_documents` |
-| POST | `/api/v1/advisor/ask` | Controlled advisor |
+| Website and API | App container, localhost:8080 | Stateless |
+| PostgreSQL | Private Compose network | `postgres_data` named volume |
+| ChromaDB | `chroma:8000`, host localhost:8000 | `chroma_data` mounted at `/data` |
+| MiniLM embeddings | App container | Model baked into image |
+| Gemini answers | Google API | Subject to your account's limits/terms |
 
-## Verification
+The Chroma client uses `HttpClient` with `CHROMA_HOST` and `CHROMA_PORT`. No hosted Chroma account or credentials are needed. Chroma stores derived vectors and ownership metadata; PostgreSQL stores users, private uploads, extracted text, and source chunks.
+
+Gemini is accessed server-side only. The default model is `gemini-3.8-flash`; override with `GEMINI_MODEL` if required by your account. Missing credentials, quota failures, or generation errors fall back to clearly labeled excerpts in the RAG chat. The controlled advisor endpoint has bounded execution and authenticated tool identity.
+
+**Privacy:** general questions and retrieved tax-rule text are sent to Gemini. Do not enter sensitive information into general questions. “Include my documents” uses local excerpts and never sends those documents to Gemini. Gemini's free-tier data terms differ from paid usage; review them before using personal information.
+
+## Configuration
+
+`.env.example` includes the three database connection variables plus two necessary application secrets: the Gemini key and the JWT signing secret. Optional settings include `GEMINI_MODEL`, `AI_MODE=extractive`, and `AI_TIMEOUT_SECONDS` (default 45). Chroma requires no API key.
+
+For an existing PostgreSQL database, replace `DATABASE_URL`; the app uses that database. The bundled Postgres service still starts but is unused. To omit it, use the external-database Compose override documented in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
+## Operations
 
 ```powershell
+docker compose ps
+docker compose logs -f app
+docker compose down
+docker compose up -d
+docker compose exec app .venv/bin/python -m aura.scripts.reindex
+```
+
+`docker compose down` keeps data. `docker compose down -v` deletes volumes and all their data. `/health` checks the process; `/ready` checks PostgreSQL/schema availability. Chroma startup is probed before migrations and API startup.
+
+Uploads support text PDFs and PNG/JPEG OCR. Convert scanned image-only PDFs to images first. Limits: 10 MB per upload, 50 documents per user, PDFs up to 100 pages/200,000 extracted characters. Queue jobs survive app restarts; failed semantic indexing can be repaired with reindex. Existing filesystem uploads from older releases must be retained or re-uploaded.
+
+## Hosting
+
+The provided Compose stack is intended for your local computer or a VM you control. Render Free does not provide persistent disks for these database containers and does not deploy a Compose stack directly. The retained `render.yaml` deploys only the app and requires externally hosted PostgreSQL and ChromaDB.
+
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for persistent hosting, external database use, Gemini configuration, and troubleshooting. Local Docker has no cloud hosting bill; Gemini free quota is limited and not a promise of unlimited free usage.
+
+## Tests
+
+```powershell
+uv sync --frozen --dev
 uv run ruff check src tests
 uv run pytest -q
 ```
 
-Integration tests require a disposable migrated PostgreSQL database:
-
-```powershell
-$env:TEST_DATABASE_URL="postgresql+asyncpg://postgres:postgres@localhost:5432/taxaura_test"
-$env:DATABASE_URL=$env:TEST_DATABASE_URL
-$env:CHROMA_MODE="disabled"
-uv run alembic upgrade head
-uv run pytest -q
-```
-
-CI runs this against PostgreSQL 17. Tests disable external AI services. Chroma tests cover ownership filters; full deployment still requires provider credentials and a working embedding download. See the deployment guide for operational boundaries before unrestricted public use.
+The PostgreSQL integration test requires a disposable migrated database in `TEST_DATABASE_URL`. CI runs native PostgreSQL tests and builds/starts the actual Compose stack, seeds knowledge, and checks a real Chroma semantic query. Gemini tests mock the API and cover configuration, generation, fallback, and private-document isolation; a live Gemini request requires your key.

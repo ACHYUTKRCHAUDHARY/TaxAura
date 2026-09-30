@@ -33,3 +33,25 @@ jobs:
       - run: uv run ruff check src tests
       - run: uv run alembic upgrade head
       - run: uv run pytest -q
+  compose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      JWT_SECRET_KEY: ci-only-compose-secret-not-for-real-deployment-12345
+      AI_MODE: extractive
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose config --quiet
+      - run: docker compose up --build --detach --wait --wait-timeout 180
+      - run: curl --fail http://localhost:8080/ready
+      - run: docker compose exec -T app .venv/bin/python -m aura.scripts.seed_knowledge
+      - name: Verify Chroma has real MiniLM embeddings
+        run: >-
+          docker compose exec -T app .venv/bin/python -c
+          "from aura.services.vector_store import collection; c=collection('rules'); assert c.count()>0; assert c.query(query_texts=['rebate'], n_results=1)['ids'][0]"
+      - name: Container logs
+        if: always()
+        run: docker compose logs --no-color --tail=100
+      - name: Stop test containers
+        if: always()
+        run: docker compose down --volumes

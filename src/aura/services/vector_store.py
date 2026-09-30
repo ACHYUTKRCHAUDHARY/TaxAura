@@ -16,13 +16,6 @@ def chroma_client():
     from chromadb.config import Settings
 
     options = Settings(anonymized_telemetry=False)
-    if settings.chroma_mode == "cloud":
-        return chromadb.CloudClient(
-            api_key=settings.chroma_api_key,
-            tenant=settings.chroma_tenant,
-            database=settings.chroma_database,
-            settings=options,
-        )
     if settings.chroma_mode == "http":
         return chromadb.HttpClient(
             host=settings.chroma_host,
@@ -30,13 +23,11 @@ def chroma_client():
             ssl=settings.chroma_ssl,
             settings=options,
         )
-    if settings.chroma_mode == "local":
-        return chromadb.PersistentClient(path=settings.chroma_directory, settings=options)
     raise RuntimeError("Semantic search is disabled")
 
 
 def collection(kind: str):
-    # Chroma's local all-MiniLM-L6-v2 embedding function is independent of Ollama.
+    # Chroma's local all-MiniLM-L6-v2 embedding function is independent of Gemini.
     # Only vectors/IDs/metadata are persisted in Chroma, not private source text.
     return chroma_client().get_or_create_collection(name=f"taxaura-{kind}-v1")
 

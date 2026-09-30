@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -12,21 +12,16 @@ class Settings(BaseSettings):
     max_documents_per_user: int = Field(default=50, ge=1)
     document_worker_enabled: bool = True
     worker_poll_seconds: float = Field(default=3, ge=0.1)
-    ai_mode: Literal["extractive", "ollama"] = "extractive"
+    ai_mode: Literal["extractive", "gemini"] = "gemini"
     ai_timeout_seconds: float = Field(default=45, ge=1, le=300)
-    chroma_mode: Literal["local", "http", "cloud", "disabled"] = "local"
-    chroma_directory: str = "storage/chroma"
-    chroma_host: str = "localhost"
-    chroma_port: int = 8001
+    chroma_mode: Literal["http", "disabled"] = "http"
+    chroma_host: str = "chroma"
+    chroma_port: int = Field(default=8000, ge=1, le=65535)
     chroma_ssl: bool = False
-    chroma_api_key: str | None = None
-    chroma_tenant: str | None = None
-    chroma_database: str | None = None
     upload_directory: Path = Path("storage/uploads")
     frontend_directory: Path = Path("frontend")
-    ollama_base_url: str = "http://localhost:11434"
-    ollama_model: str = "qwen2.5:3b"
-    ollama_embedding_model: str = "nomic-embed-text"
+    gemini_api_key: SecretStr | None = None
+    gemini_model: str = "gemini-3.8-flash"
     n8n_webhook_url: str | None = None
     n8n_webhook_secret: str | None = None
     tesseract_cmd: str | None = None
@@ -39,6 +34,11 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5500",
     ]
     allowed_hosts: Annotated[list[str], NoDecode] = ["localhost", "127.0.0.1", "testserver"]
+
+    @field_validator("gemini_api_key", mode="before")
+    @classmethod
+    def empty_api_key(cls, value):
+        return value or None
 
     @field_validator("database_url", mode="before")
     @classmethod
@@ -57,16 +57,6 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_production_secrets(self) -> Settings:
-        if self.chroma_mode == "cloud" and not all(
-            (self.chroma_api_key, self.chroma_tenant, self.chroma_database)
-        ):
-            raise ValueError(
-                "Chroma Cloud requires CHROMA_API_KEY, CHROMA_TENANT, and CHROMA_DATABASE."
-            )
-        if self.environment == "production" and self.chroma_mode == "local":
-            raise ValueError(
-                "Use hosted ChromaDB (cloud/http) or explicitly disable vectors in production."
-            )
         if self.environment == "production" and self.jwt_secret_key.startswith("replace-this"):
             raise ValueError("JWT_SECRET_KEY must be changed in production.")
         if len(self.jwt_secret_key) < 32:

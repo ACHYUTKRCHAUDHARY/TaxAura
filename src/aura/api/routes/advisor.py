@@ -14,5 +14,5 @@ async def ask_tax_advisor(payload: AdvisorQuestion, current_user: CurrentUser) -
     except Exception as error:
         raise HTTPException(
             status_code=503,
-            detail="Tax advisor is unavailable. Ensure Ollama is running and its configured model is installed.",
+            detail="Tax advisor is unavailable. Check Gemini configuration, model availability, and API quota.",
         ) from error
